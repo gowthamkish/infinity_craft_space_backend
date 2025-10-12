@@ -16,7 +16,6 @@ router.get("/dashboard", async (req, res) => {
 // Example route
 router.get("/users", async (req, res) => {
   const users = await User.find();
-  console.log("USERS", users);
   res.json(users);
 });
 

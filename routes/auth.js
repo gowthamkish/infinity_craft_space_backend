@@ -5,7 +5,6 @@ const User = require("../models/User");
 const { protect, isAdmin } = require("../middlewares/authMiddleware");
 
 router.post("/register", async (req, res) => {
-    console.log('register body', req.body);
   const hashed = await bcrypt.hash(req.body.password, 10);
   const newUser = new User({ ...req.body, password: hashed });
   await newUser.save();
@@ -13,7 +12,6 @@ router.post("/register", async (req, res) => {
 });
 
 router.post("/login", async (req, res) => {
-    console.log('login user req body', req.body);
   const user = await User.findOne({ email: req.body.email });
   if (!user) return res.status(400).json({ error: "Invalid email" });
   const match = await bcrypt.compare(req.body.password, user.password);
@@ -25,6 +23,16 @@ router.post("/login", async (req, res) => {
 // Get user profile
 router.get("/profile", protect, async (req, res) => {
   res.json(req.user);
+});
+
+// Test authentication
+router.get("/test-auth", protect, async (req, res) => {
+  res.json({ 
+    message: "Authentication working!", 
+    user: req.user,
+    userId: req.user._id,
+    userIdString: req.user._id.toString()
+  });
 });
 
 // Admin-only route
