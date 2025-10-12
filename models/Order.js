@@ -20,7 +20,7 @@ items: [
   currency: { type: String, default: "INR" },
   status: { 
     type: String, 
-    enum: ["pending", "paid", "failed", "cancelled"],
+    enum: ["pending", "confirmed", "processing", "cancelled", "shipped", "delivered"],
     default: "pending"
   },
   razorpayOrderId: { type: String },
