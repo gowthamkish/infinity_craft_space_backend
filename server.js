@@ -19,7 +19,7 @@ mongoose
   .catch((err) => console.error(err));
 
 app.use("/api/auth", authRoutes);
-app.use("/api/products", protect, productRoutes);
+app.use("/api/products", productRoutes);
 app.use("/api/admin", protect, isAdmin, adminRoutes);
 app.use("/api/order", protect, require("./routes/order"));
 
