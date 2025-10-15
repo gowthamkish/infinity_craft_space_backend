@@ -5,6 +5,7 @@ require("dotenv").config();
 const authRoutes = require("./routes/auth");
 const productRoutes = require("./routes/products");
 const adminRoutes = require("./routes/admin");
+const categoryRoutes = require("./routes/categories");
 const { protect, isAdmin } = require("./middlewares/authMiddleware");
 
 const app = express();
@@ -21,6 +22,7 @@ mongoose
 app.use("/api/auth", authRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/admin", protect, isAdmin, adminRoutes);
+app.use("/api/categories", categoryRoutes);
 app.use("/api/orders", protect, require("./routes/order"));
 app.use("/api/payment", require("./routes/payment"));
 
