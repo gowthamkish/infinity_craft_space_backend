@@ -26,7 +26,8 @@ const storage = new CloudinaryStorage({
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
+    fileSize: 10 * 1024 * 1024, // 10MB limit per file
+    files: 10 // Maximum 10 files
   },
   fileFilter: (req, file, cb) => {
     // Check file type
@@ -37,6 +38,59 @@ const upload = multer({
     }
   }
 });
+
+// Upload multiple images from base64 array
+const uploadMultipleBase64Images = async (imageArray, options = {}) => {
+  try {
+    const uploadPromises = imageArray.map(async (imageData, index) => {
+      let base64Data = imageData.base64 || imageData;
+      
+      // Handle both data URL and plain base64 formats
+      if (base64Data && !base64Data.includes('data:image')) {
+        base64Data = `data:image/jpeg;base64,${base64Data}`;
+      }
+      
+      const uploadOptions = {
+        folder: 'infinity_craft_products',
+        public_id: `product_${Date.now()}_${index}`,
+        transformation: [
+          { width: 800, height: 600, crop: 'limit' },
+          { quality: 'auto' }
+        ],
+        ...options
+      };
+
+      const result = await cloudinary.uploader.upload(base64Data, uploadOptions);
+
+      return {
+        url: result.secure_url,
+        publicId: result.public_id,
+        originalName: imageData.originalName || imageData.filename || `image_${index + 1}.jpg`,
+        isPrimary: index === 0, // First image is primary
+        width: result.width,
+        height: result.height,
+        format: result.format,
+        bytes: result.bytes,
+        uploadedAt: new Date()
+      };
+    });
+
+    return await Promise.all(uploadPromises);
+  } catch (error) {
+    console.error('Multiple images upload error:', error);
+    throw new Error(`Multiple images upload failed: ${error.message}`);
+  }
+};
+
+// Delete multiple images from Cloudinary
+const deleteMultipleImages = async (publicIds) => {
+  try {
+    const deletePromises = publicIds.map(publicId => cloudinary.uploader.destroy(publicId));
+    return await Promise.all(deletePromises);
+  } catch (error) {
+    throw new Error(`Multiple images delete failed: ${error.message}`);
+  }
+};
 
 // Upload image from base64 string
 const uploadBase64Image = async (base64String, options = {}) => {
@@ -90,5 +144,7 @@ module.exports = {
   cloudinary,
   upload,
   uploadBase64Image,
-  deleteImage
+  uploadMultipleBase64Images,
+  deleteImage,
+  deleteMultipleImages
 };
