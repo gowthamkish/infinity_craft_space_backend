@@ -1,7 +1,13 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const session = require("express-session");
+const passport = require("passport");
 require("dotenv").config();
+
+// Import passport configuration
+require("./config/passport");
+
 const authRoutes = require("./routes/auth");
 const productRoutes = require("./routes/products");
 const adminRoutes = require("./routes/admin");
@@ -9,7 +15,27 @@ const categoryRoutes = require("./routes/categories");
 const { protect, isAdmin } = require("./middlewares/authMiddleware");
 
 const app = express();
-app.use(cors());
+
+// CORS configuration
+app.use(cors({
+  origin: process.env.FRONTEND_APP_URL || 'http://localhost:3000',
+  credentials: true
+}));
+
+// Session configuration (required for passport)
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-session-secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production', // HTTPS in production
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
+// Passport middleware
+app.use(passport.initialize());
+app.use(passport.session());
 
 // Increase payload size limits for multiple image uploads
 app.use(express.json({ 
