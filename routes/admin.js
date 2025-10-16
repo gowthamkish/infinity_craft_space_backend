@@ -31,11 +31,63 @@ router.get("/dashboard", async (req, res) => {
   }
 });
 
-// Example route
+// Get all users
 router.get("/users", async (req, res) => {
-  const users = await User.find();
-  res.json(users);
+  try {
+    const users = await User.find().select('-password');
+    res.json(users);
+  } catch (error) {
+    console.error("Get users error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to fetch users" 
+    });
+  }
 });
 
+// Update user role (make admin/user)
+router.put("/users/:id/role", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isAdmin } = req.body;
+
+    // Validate input
+    if (typeof isAdmin !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        error: "isAdmin field must be a boolean"
+      });
+    }
+
+    // Find and update user
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: "User not found"
+      });
+    }
+
+    // Update user role
+    user.isAdmin = isAdmin;
+    await user.save();
+
+    // Return updated user (without password)
+    const updatedUser = await User.findById(id).select('-password');
+
+    res.json({
+      success: true,
+      message: `User ${isAdmin ? 'promoted to admin' : 'role changed to user'}`,
+      user: updatedUser
+    });
+
+  } catch (error) {
+    console.error("Update user role error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to update user role"
+    });
+  }
+});
 
 module.exports = router;
