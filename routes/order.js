@@ -13,8 +13,13 @@ router.post("/", async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const orders = await Order.find({})
-      .populate("userId", "username email") // Populate user details
+      .populate("userId", "username email isAdmin") // Populate user details
       .sort({ createdAt: -1 }); // Sort by newest first
+
+    // Debug: Log first order's userId to verify population
+    if (orders.length > 0) {
+      console.log('First order userId after populate:', JSON.stringify(orders[0].userId, null, 2));
+    }
 
     res.json({ 
       success: true, 
