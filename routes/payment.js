@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const Order = require("../models/Order");
 const Cart = require("../models/Cart");
 const Product = require("../models/Product");
+const Notification = require("../models/Notification");
 const { protect } = require("../middlewares/authMiddleware");
 
 // Initialize Razorpay instance
@@ -178,6 +179,19 @@ router.post("/verify-payment", protect, async (req, res) => {
       order.razorpaySignature = razorpaySignature;
       order.updatedAt = new Date();
       await order.save();
+
+      // Create an admin notification about the new confirmed order
+      try {
+        await Notification.create({
+          type: 'order',
+          message: `New order received: ${order._id}`,
+          orderId: order._id,
+          read: false,
+          meta: { userId: order.userId, totalAmount: order.totalAmount }
+        });
+      } catch (notifErr) {
+        console.warn('Warning: could not create order notification -', notifErr.message);
+      }
 
       // Clear user's cart
       try {
