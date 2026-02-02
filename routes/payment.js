@@ -129,8 +129,8 @@ router.post("/", protect, async (req, res) => {
       order: {
         id: order._id,
         razorpayOrderId: razorpayOrder.id,
-        amount: 1, // Amount in rupees for display
-        amountInPaise: 1000, // Amount in paise for Razorpay
+        amount: amount / 100, // Amount in rupees for display
+        amountInPaise: amount, // Amount in paise for Razorpay
         currency: currency || "INR",
       },
       razorpayKeyId: process.env.RAZORPAY_KEY_ID,
@@ -146,6 +146,14 @@ router.post("/verify-payment", protect, async (req, res) => {
   try {
     const { razorpayOrderId, razorpayPaymentId, razorpaySignature, orderId } = req.body;
 
+    // Validate required fields
+    if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing payment verification details",
+      });
+    }
+
     // Generate signature for verification
     const body = razorpayOrderId + "|" + razorpayPaymentId;
     const expectedSignature = crypto
@@ -157,18 +165,27 @@ router.post("/verify-payment", protect, async (req, res) => {
       // Payment is valid
       const order = await Order.findById(orderId);
       if (!order) {
-        return res.status(404).json({ message: "Order not found" });
+        console.error("Order not found in database:", orderId);
+        return res.status(404).json({ 
+          success: false,
+          message: "Order not found" 
+        });
       }
 
-      // Update order status
-      order.status = "paid";
+      // Update order status to confirmed (payment successful)
+      order.status = "confirmed";
       order.razorpayPaymentId = razorpayPaymentId;
       order.razorpaySignature = razorpaySignature;
       order.updatedAt = new Date();
       await order.save();
 
       // Clear user's cart
-      await Cart.findOneAndDelete({ userId: req.user._id });
+      try {
+        await Cart.findOneAndDelete({ userId: req.user._id });
+      } catch (cartError) {
+        console.warn("Warning: Could not clear cart -", cartError.message);
+        // Don't fail the payment verification if cart clearing fails
+      }
 
       res.json({
         success: true,
@@ -177,21 +194,35 @@ router.post("/verify-payment", protect, async (req, res) => {
       });
     } else {
       // Payment verification failed
+      console.error("Signature mismatch for order:", orderId);
+      console.error("Expected:", expectedSignature);
+      console.error("Received:", razorpaySignature);
+      
       const order = await Order.findById(orderId);
       if (order) {
-        order.status = "failed";
+        order.status = "cancelled";
+        order.failureReason = "Signature verification failed";
         order.updatedAt = new Date();
         await order.save();
       }
 
       res.status(400).json({
         success: false,
-        message: "Payment verification failed",
+        message: "Payment verification failed - Signature mismatch",
+        debug: {
+          expectedSignature: expectedSignature,
+          receivedSignature: razorpaySignature,
+          match: expectedSignature === razorpaySignature
+        }
       });
     }
   } catch (error) {
     console.error("Error verifying payment:", error);
-    res.status(500).json({ message: "Payment verification failed", error: error.message });
+    res.status(500).json({ 
+      success: false,
+      message: "Payment verification failed", 
+      error: error.message 
+    });
   }
 });
 
@@ -239,7 +270,7 @@ router.post("/payment-failed", protect, async (req, res) => {
 
     const order = await Order.findById(orderId);
     if (order) {
-      order.status = "failed";
+      order.status = "cancelled";
       order.updatedAt = new Date();
       await order.save();
     }
