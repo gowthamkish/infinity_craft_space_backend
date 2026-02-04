@@ -56,13 +56,17 @@ router.get('/addresses', protect, async (req, res) => {
 
 router.post('/addresses', protect, async (req, res) => {
   try {
-    const { label, street, city, state, zipCode, country, phone } = req.body;
+    const { label, street, city, state, zipCode, country, phone, isDefault } = req.body;
     if (!street || !city || !state || !zipCode || !country) {
       return res.status(400).json({ error: 'Missing required address fields' });
     }
 
     const user = await User.findById(req.user._id);
-    user.addresses.unshift({ label, street, city, state, zipCode, country, phone });
+    // if this address should be default, clear other defaults
+    if (isDefault) {
+      user.addresses.forEach(a => { a.isDefault = false; });
+    }
+    user.addresses.unshift({ label, street, city, state, zipCode, country, phone, isDefault: !!isDefault });
     // cap at 20 addresses to avoid unbounded growth
     if (user.addresses.length > 20) user.addresses = user.addresses.slice(0, 20);
     await user.save();
@@ -83,6 +87,97 @@ router.delete('/addresses/:addressId', protect, async (req, res) => {
   } catch (err) {
     console.error('Error deleting address', err);
     res.status(500).json({ error: 'Failed to delete address' });
+  }
+});
+
+// Update address
+router.put('/addresses/:addressId', protect, async (req, res) => {
+  try {
+    const { addressId } = req.params;
+    const { label, street, city, state, zipCode, country, phone, isDefault } = req.body;
+    const user = await User.findById(req.user._id);
+    const addr = user.addresses.id(addressId);
+    if (!addr) return res.status(404).json({ error: 'Address not found' });
+
+    // Update fields
+    addr.label = label ?? addr.label;
+    addr.street = street ?? addr.street;
+    addr.city = city ?? addr.city;
+    addr.state = state ?? addr.state;
+    addr.zipCode = zipCode ?? addr.zipCode;
+    addr.country = country ?? addr.country;
+    addr.phone = phone ?? addr.phone;
+    if (typeof isDefault !== 'undefined' && isDefault) {
+      user.addresses.forEach(a => { a.isDefault = false; });
+      addr.isDefault = true;
+    } else if (typeof isDefault !== 'undefined') {
+      addr.isDefault = !!isDefault;
+    }
+
+    await user.save();
+    res.json({ addresses: user.addresses });
+  } catch (err) {
+    console.error('Error updating address', err);
+    res.status(500).json({ error: 'Failed to update address' });
+  }
+});
+
+// Set default address
+router.post('/addresses/:addressId/default', protect, async (req, res) => {
+  try {
+    const { addressId } = req.params;
+    const user = await User.findById(req.user._id);
+    const addr = user.addresses.id(addressId);
+    if (!addr) return res.status(404).json({ error: 'Address not found' });
+    user.addresses.forEach(a => { a.isDefault = false; });
+    addr.isDefault = true;
+    await user.save();
+    res.json({ addresses: user.addresses });
+  } catch (err) {
+    console.error('Error setting default address', err);
+    res.status(500).json({ error: 'Failed to set default address' });
+  }
+});
+
+// Wishlist endpoints
+router.get('/wishlist', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).populate({ path: 'wishlist', model: 'Product' });
+    res.json({ wishlist: user.wishlist || [] });
+  } catch (err) {
+    console.error('Error fetching wishlist', err);
+    res.status(500).json({ error: 'Failed to fetch wishlist' });
+  }
+});
+
+router.post('/wishlist', protect, async (req, res) => {
+  try {
+    const { productId } = req.body;
+    if (!productId) return res.status(400).json({ error: 'productId required' });
+    const user = await User.findById(req.user._id);
+    if (!user.wishlist.some(id => String(id) === String(productId))) {
+      user.wishlist.push(productId);
+      await user.save();
+    }
+    const populated = await User.findById(req.user._id).populate({ path: 'wishlist', model: 'Product' });
+    res.status(201).json({ wishlist: populated.wishlist });
+  } catch (err) {
+    console.error('Error adding to wishlist', err);
+    res.status(500).json({ error: 'Failed to add to wishlist' });
+  }
+});
+
+router.delete('/wishlist/:productId', protect, async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const user = await User.findById(req.user._id);
+    user.wishlist = user.wishlist.filter(id => String(id) !== String(productId));
+    await user.save();
+    const populated = await User.findById(req.user._id).populate({ path: 'wishlist', model: 'Product' });
+    res.json({ wishlist: populated.wishlist });
+  } catch (err) {
+    console.error('Error removing from wishlist', err);
+    res.status(500).json({ error: 'Failed to remove from wishlist' });
   }
 });
 
