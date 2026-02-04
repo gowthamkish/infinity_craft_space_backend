@@ -21,7 +21,13 @@ const ProductSchema = new mongoose.Schema({
     uploadedAt: { type: Date, default: Date.now }
   },
   createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
+  updatedAt: { type: Date, default: Date.now },
+  lastEditedBy: {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    name: { type: String },
+    email: { type: String }
+  },
+  lastEditedAt: { type: Date }
 });
 
 module.exports = mongoose.model("Product", ProductSchema);

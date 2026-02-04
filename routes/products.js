@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const Product = require('../models/Product');
 const { upload, uploadBase64Image, uploadMultipleBase64Images, deleteImage, deleteMultipleImages } = require('../config/cloudinary');
+const { protect, isAdmin } = require('../middlewares/authMiddleware');
 
 // Get all products
 router.get("/", async (req, res) => {
@@ -294,7 +295,7 @@ router.post("/upload-single", upload.single('image'), async (req, res) => {
 });
 
 // Update product
-router.put("/:id", async (req, res) => {
+router.put("/:id", protect, isAdmin, async (req, res) => {
   try {
     const { name, description, price, images, image, category, subCategory, keepExistingImages } = req.body;
     
@@ -307,7 +308,13 @@ router.put("/:id", async (req, res) => {
     }
 
     const updateData = {
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      lastEditedAt: new Date(),
+      lastEditedBy: {
+        userId: req.user._id,
+        name: req.user.name || req.user.email,
+        email: req.user.email
+      }
     };
 
     // Update basic fields
