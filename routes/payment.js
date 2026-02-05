@@ -14,17 +14,16 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
-
 // Create Razorpay order
 router.post("/", protect, async (req, res) => {
   try {
     const { amount, currency, shippingAddress, items } = req.body;
-    
+
     // Check if user exists
     if (!req.user || !req.user._id) {
       return res.status(401).json({ message: "User not authenticated" });
     }
-    
+
     const userId = req.user._id;
 
     // Validate required fields
@@ -43,19 +42,47 @@ router.post("/", protect, async (req, res) => {
 
     // If items are provided, use them; otherwise get from cart or create default
     if (items && items.length > 0) {
-      // Validate and process provided items (ensure they match new schema)
-      orderItems = items.map(item => ({
-        product: {
-          _id: item.productId || null,
-          name: item.name || "Direct Payment Item",
-          price: 1,
-          description: item.description || "Direct payment transaction",
-          category: item.category || "General",
-          subCategory: item.subCategory || "Payment",
-        },
-        quantity: item.quantity || 1,
-        totalPrice: (item.price || totalAmount) * (item.quantity || 1),
-      }));
+      // Validate and process provided items with proper product details
+      for (const item of items) {
+        let productData = null;
+
+        // If productId is provided, fetch full product details from DB
+        if (item.productId) {
+          productData = await Product.findById(item.productId);
+        }
+
+        // Use fetched product data or fallback to provided data
+        if (productData) {
+          orderItems.push({
+            product: {
+              _id: productData._id,
+              name: productData.name,
+              price: productData.price,
+              description: productData.description,
+              category: productData.category,
+              subCategory: productData.subCategory,
+            },
+            quantity: item.quantity || 1,
+            totalPrice: productData.price * (item.quantity || 1),
+          });
+        } else {
+          // Only use defaults if no product found and proper data not provided
+          if (item.productId || item.name) {
+            orderItems.push({
+              product: {
+                _id: item.productId || null,
+                name: item.name || "Product",
+                price: item.price || 0,
+                description: item.description || "",
+                category: item.category || "General",
+                subCategory: item.subCategory || "Product",
+              },
+              quantity: item.quantity || 1,
+              totalPrice: (item.price || 0) * (item.quantity || 1),
+            });
+          }
+        }
+      }
     } else {
       // Try to get from cart first
       const cart = await Cart.findOne({ userId }).populate("items.productId");
@@ -77,18 +104,21 @@ router.post("/", protect, async (req, res) => {
         }
       } else {
         // Create a default item for direct payment (no specific products)
-        orderItems = [{
-          product: {
-            _id: null,
-            name: "Direct Payment",
-            price: totalAmount,
-            description: "Direct payment transaction without specific product",
-            category: "Payment",
-            subCategory: "Direct",
+        orderItems = [
+          {
+            product: {
+              _id: null,
+              name: "Direct Payment",
+              price: totalAmount,
+              description:
+                "Direct payment transaction without specific product",
+              category: "Payment",
+              subCategory: "Direct",
+            },
+            quantity: 1,
+            totalPrice: totalAmount,
           },
-          quantity: 1,
-          totalPrice: totalAmount,
-        }];
+        ];
       }
     }
 
@@ -100,7 +130,6 @@ router.post("/", protect, async (req, res) => {
       country: "India",
       zipCode: "000000",
     };
-
 
     // Create order in database
     const order = new Order({
@@ -138,14 +167,17 @@ router.post("/", protect, async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating order:", error);
-    res.status(500).json({ message: "Failed to create order", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Failed to create order", error: error.message });
   }
 });
 
 // Verify payment
 router.post("/verify-payment", protect, async (req, res) => {
   try {
-    const { razorpayOrderId, razorpayPaymentId, razorpaySignature, orderId } = req.body;
+    const { razorpayOrderId, razorpayPaymentId, razorpaySignature, orderId } =
+      req.body;
 
     // Validate required fields
     if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
@@ -167,9 +199,9 @@ router.post("/verify-payment", protect, async (req, res) => {
       const order = await Order.findById(orderId);
       if (!order) {
         console.error("Order not found in database:", orderId);
-        return res.status(404).json({ 
+        return res.status(404).json({
           success: false,
-          message: "Order not found" 
+          message: "Order not found",
         });
       }
 
@@ -183,14 +215,17 @@ router.post("/verify-payment", protect, async (req, res) => {
       // Create an admin notification about the new confirmed order
       try {
         await Notification.create({
-          type: 'order',
+          type: "order",
           message: `New order received: ${order._id}`,
           orderId: order._id,
           read: false,
-          meta: { userId: order.userId, totalAmount: order.totalAmount }
+          meta: { userId: order.userId, totalAmount: order.totalAmount },
         });
       } catch (notifErr) {
-        console.warn('Warning: could not create order notification -', notifErr.message);
+        console.warn(
+          "Warning: could not create order notification -",
+          notifErr.message,
+        );
       }
 
       // Clear user's cart
@@ -211,7 +246,7 @@ router.post("/verify-payment", protect, async (req, res) => {
       console.error("Signature mismatch for order:", orderId);
       console.error("Expected:", expectedSignature);
       console.error("Received:", razorpaySignature);
-      
+
       const order = await Order.findById(orderId);
       if (order) {
         order.status = "cancelled";
@@ -226,16 +261,16 @@ router.post("/verify-payment", protect, async (req, res) => {
         debug: {
           expectedSignature: expectedSignature,
           receivedSignature: razorpaySignature,
-          match: expectedSignature === razorpaySignature
-        }
+          match: expectedSignature === razorpaySignature,
+        },
       });
     }
   } catch (error) {
     console.error("Error verifying payment:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: "Payment verification failed", 
-      error: error.message 
+      message: "Payment verification failed",
+      error: error.message,
     });
   }
 });
@@ -259,7 +294,9 @@ router.get("/order/:orderId", protect, async (req, res) => {
     res.json({ success: true, order });
   } catch (error) {
     console.error("Error fetching order:", error);
-    res.status(500).json({ message: "Failed to fetch order", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Failed to fetch order", error: error.message });
   }
 });
 
@@ -273,7 +310,9 @@ router.get("/orders", protect, async (req, res) => {
     res.json({ success: true, orders });
   } catch (error) {
     console.error("Error fetching orders:", error);
-    res.status(500).json({ message: "Failed to fetch orders", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Failed to fetch orders", error: error.message });
   }
 });
 
@@ -295,7 +334,10 @@ router.post("/payment-failed", protect, async (req, res) => {
     });
   } catch (error) {
     console.error("Error handling payment failure:", error);
-    res.status(500).json({ message: "Failed to handle payment failure", error: error.message });
+    res.status(500).json({
+      message: "Failed to handle payment failure",
+      error: error.message,
+    });
   }
 });
 
@@ -303,7 +345,7 @@ router.post("/payment-failed", protect, async (req, res) => {
 router.post("/create-simple-order", protect, async (req, res) => {
   try {
     const { amount, currency = "INR" } = req.body;
-    
+
     if (!req.user || !req.user._id) {
       return res.status(401).json({ message: "User not authenticated" });
     }
@@ -332,7 +374,9 @@ router.post("/create-simple-order", protect, async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating simple order:", error);
-    res.status(500).json({ message: "Failed to create order", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Failed to create order", error: error.message });
   }
 });
 
@@ -340,7 +384,7 @@ router.post("/create-simple-order", protect, async (req, res) => {
 router.post("/create-direct-order", protect, async (req, res) => {
   try {
     const { amount, currency = "INR" } = req.body;
-    
+
     if (!req.user || !req.user._id) {
       return res.status(401).json({ message: "User not authenticated" });
     }
@@ -371,7 +415,9 @@ router.post("/create-direct-order", protect, async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating direct order:", error);
-    res.status(500).json({ message: "Failed to create order", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Failed to create order", error: error.message });
   }
 });
 
