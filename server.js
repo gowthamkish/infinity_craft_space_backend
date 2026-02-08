@@ -7,9 +7,21 @@ const productRoutes = require("./routes/products");
 const adminRoutes = require("./routes/admin");
 const categoryRoutes = require("./routes/categories");
 const { protect, isAdmin } = require("./middlewares/authMiddleware");
+const { apiLimiter, strictLimiter } = require("./middlewares/rateLimiter");
+const { sanitizeInput } = require("./middlewares/validators");
 
 const app = express();
+
+// Trust proxy for rate limiting behind reverse proxy (Render, Heroku, etc.)
+app.set("trust proxy", 1);
+
 app.use(cors());
+
+// Apply global rate limiting
+app.use("/api/", apiLimiter);
+
+// Apply input sanitization to all routes
+app.use(sanitizeInput);
 
 // Increase payload size limits for multiple image uploads
 app.use(
@@ -38,7 +50,7 @@ app.use("/api/products", productRoutes);
 app.use("/api/admin", protect, isAdmin, adminRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api/orders", protect, require("./routes/order"));
-app.use("/api/payment", require("./routes/payment"));
+app.use("/api/payment", strictLimiter, require("./routes/payment")); // Strict limiting for payments
 app.use("/api/reviews", require("./routes/reviews"));
 
 // Error handling middleware for payload too large
