@@ -35,6 +35,41 @@ router.post("/", protect, async (req, res) => {
       return res.status(400).json({ message: "Currency is required" });
     }
 
+    // Stock validation before order creation
+    if (items && items.length > 0) {
+      const stockErrors = [];
+      for (const item of items) {
+        if (item.productId) {
+          const product = await Product.findById(item.productId);
+          if (product && product.trackInventory) {
+            if (product.stock <= 0) {
+              stockErrors.push({
+                productId: item.productId,
+                name: product.name,
+                error: "Out of stock",
+              });
+            } else if (product.stock < item.quantity) {
+              stockErrors.push({
+                productId: item.productId,
+                name: product.name,
+                error: `Only ${product.stock} available`,
+                availableStock: product.stock,
+                requestedQuantity: item.quantity,
+              });
+            }
+          }
+        }
+      }
+
+      if (stockErrors.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Some items are out of stock or have insufficient quantity",
+          stockErrors,
+        });
+      }
+    }
+
     // Convert amount from paise to rupees for database storage
     const totalAmount = amount / 100;
 
@@ -211,6 +246,28 @@ router.post("/verify-payment", protect, async (req, res) => {
       order.razorpaySignature = razorpaySignature;
       order.updatedAt = new Date();
       await order.save();
+
+      // Deduct stock for purchased items
+      try {
+        for (const item of order.items) {
+          if (item.product && item.product._id) {
+            const product = await Product.findById(item.product._id);
+            if (product && product.trackInventory) {
+              const newStock = Math.max(0, product.stock - item.quantity);
+              await Product.findByIdAndUpdate(item.product._id, {
+                stock: newStock,
+                updatedAt: new Date(),
+              });
+              console.log(
+                `Stock updated for ${product.name}: ${product.stock} -> ${newStock}`,
+              );
+            }
+          }
+        }
+      } catch (stockError) {
+        console.warn("Warning: Could not update stock -", stockError.message);
+        // Don't fail the payment verification if stock update fails
+      }
 
       // Create an admin notification about the new confirmed order
       try {

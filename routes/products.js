@@ -144,6 +144,14 @@ router.post("/", protect, isAdmin, productValidation, async (req, res) => {
       price: parseFloat(price),
       category,
       subCategory,
+      // Stock/Inventory fields
+      stock: req.body.stock !== undefined ? parseInt(req.body.stock) : 0,
+      lowStockThreshold:
+        req.body.lowStockThreshold !== undefined
+          ? parseInt(req.body.lowStockThreshold)
+          : 5,
+      trackInventory:
+        req.body.trackInventory !== undefined ? req.body.trackInventory : true,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -230,6 +238,16 @@ router.post(
         price: parseFloat(price),
         category,
         subCategory,
+        // Stock/Inventory fields
+        stock: req.body.stock !== undefined ? parseInt(req.body.stock) : 0,
+        lowStockThreshold:
+          req.body.lowStockThreshold !== undefined
+            ? parseInt(req.body.lowStockThreshold)
+            : 5,
+        trackInventory:
+          req.body.trackInventory !== undefined
+            ? req.body.trackInventory
+            : true,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -362,6 +380,14 @@ router.put("/:id", protect, isAdmin, async (req, res) => {
     if (price) updateData.price = parseFloat(price);
     if (category) updateData.category = category;
     if (subCategory) updateData.subCategory = subCategory;
+
+    // Update stock/inventory fields
+    if (req.body.stock !== undefined)
+      updateData.stock = parseInt(req.body.stock);
+    if (req.body.lowStockThreshold !== undefined)
+      updateData.lowStockThreshold = parseInt(req.body.lowStockThreshold);
+    if (req.body.trackInventory !== undefined)
+      updateData.trackInventory = req.body.trackInventory;
 
     // Handle multiple images update
     if (images && Array.isArray(images) && images.length > 0) {
@@ -554,6 +580,137 @@ router.delete("/:id", protect, isAdmin, async (req, res) => {
     });
   } catch (err) {
     console.error("Product deletion error:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+});
+
+// Check stock availability for multiple products
+router.post("/check-stock", async (req, res) => {
+  try {
+    const { items } = req.body; // Array of { productId, quantity }
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Items array is required",
+      });
+    }
+
+    const stockStatus = [];
+    let allAvailable = true;
+
+    for (const item of items) {
+      const product = await Product.findById(item.productId);
+
+      if (!product) {
+        stockStatus.push({
+          productId: item.productId,
+          available: false,
+          error: "Product not found",
+        });
+        allAvailable = false;
+        continue;
+      }
+
+      const isAvailable =
+        !product.trackInventory || product.stock >= item.quantity;
+      const isLowStock =
+        product.trackInventory &&
+        product.stock <= product.lowStockThreshold &&
+        product.stock > 0;
+      const isOutOfStock = product.trackInventory && product.stock <= 0;
+
+      stockStatus.push({
+        productId: item.productId,
+        name: product.name,
+        requestedQuantity: item.quantity,
+        availableStock: product.trackInventory ? product.stock : null,
+        trackInventory: product.trackInventory,
+        available: isAvailable,
+        isLowStock,
+        isOutOfStock,
+        lowStockThreshold: product.lowStockThreshold,
+      });
+
+      if (!isAvailable) {
+        allAvailable = false;
+      }
+    }
+
+    res.json({
+      success: true,
+      allAvailable,
+      items: stockStatus,
+    });
+  } catch (err) {
+    console.error("Stock check error:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+});
+
+// Update stock for multiple products (used after payment)
+router.post("/update-stock", protect, async (req, res) => {
+  try {
+    const { items } = req.body; // Array of { productId, quantity }
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Items array is required",
+      });
+    }
+
+    const results = [];
+
+    for (const item of items) {
+      const product = await Product.findById(item.productId);
+
+      if (!product) {
+        results.push({
+          productId: item.productId,
+          success: false,
+          error: "Product not found",
+        });
+        continue;
+      }
+
+      if (product.trackInventory) {
+        const newStock = Math.max(0, product.stock - item.quantity);
+        await Product.findByIdAndUpdate(item.productId, {
+          stock: newStock,
+          updatedAt: new Date(),
+        });
+
+        results.push({
+          productId: item.productId,
+          name: product.name,
+          previousStock: product.stock,
+          quantityDeducted: item.quantity,
+          newStock,
+          success: true,
+        });
+      } else {
+        results.push({
+          productId: item.productId,
+          name: product.name,
+          success: true,
+          message: "Inventory tracking disabled for this product",
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      results,
+    });
+  } catch (err) {
+    console.error("Stock update error:", err);
     res.status(500).json({
       success: false,
       error: err.message,
