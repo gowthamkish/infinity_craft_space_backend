@@ -3,23 +3,21 @@ const Order = require("../models/Order");
 const router = express.Router();
 
 router.post("/", async (req, res) => {
-  const { userId, items } = req.body;
+  const { items } = req.body;
+  // Use the authenticated user's ID from the middleware
+  const userId = req.user._id;
   const order = new Order({ userId, items });
   await order.save();
   res.json({ success: true, order });
 });
 
-// Get all orders
+// Get orders for the authenticated user
 router.get("/", async (req, res) => {
   try {
-    const orders = await Order.find({})
+    // Filter orders by the authenticated user's ID
+    const orders = await Order.find({ userId: req.user._id })
       .populate("userId", "username email isAdmin") // Populate user details
       .sort({ createdAt: -1 }); // Sort by newest first
-
-    // Debug: Log first order's userId to verify population
-    if (orders.length > 0) {
-      console.log('First order userId after populate:', JSON.stringify(orders[0].userId, null, 2));
-    }
 
     res.json({ 
       success: true, 

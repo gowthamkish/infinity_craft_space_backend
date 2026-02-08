@@ -132,5 +132,27 @@ router.put("/notifications/:id/read", async (req, res) => {
   }
 });
 
+// Get all orders (admin only)
+router.get("/orders", async (req, res) => {
+  try {
+    const orders = await Order.find({})
+      .populate("userId", "username email isAdmin")
+      .sort({ createdAt: -1 });
+
+    res.json({ 
+      success: true, 
+      count: orders.length,
+      orders 
+    });
+  } catch (error) {
+    console.error("Error fetching all orders:", error);
+    res.status(500).json({ 
+      success: false, 
+      message: "Failed to fetch orders", 
+      error: error.message 
+    });
+  }
+});
+
 module.exports = router;
 
