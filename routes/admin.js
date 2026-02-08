@@ -14,20 +14,20 @@ router.get("/dashboard", async (req, res) => {
     const userCount = await User.countDocuments();
     const productCount = await Product.countDocuments();
     const orderCount = await Order.countDocuments();
-    
-    res.json({ 
-      userCount, 
-      productCount, 
-      orderCount 
+
+    res.json({
+      userCount,
+      productCount,
+      orderCount,
     });
   } catch (error) {
     console.error("Dashboard counts error:", error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       error: "Failed to fetch dashboard counts",
       userCount: 0,
       productCount: 0,
-      orderCount: 0
+      orderCount: 0,
     });
   }
 });
@@ -35,13 +35,13 @@ router.get("/dashboard", async (req, res) => {
 // Get all users
 router.get("/users", async (req, res) => {
   try {
-    const users = await User.find().select('-password');
+    const users = await User.find().select("-password");
     res.json(users);
   } catch (error) {
     console.error("Get users error:", error);
-    res.status(500).json({ 
-      success: false, 
-      error: "Failed to fetch users" 
+    res.status(500).json({
+      success: false,
+      error: "Failed to fetch users",
     });
   }
 });
@@ -53,10 +53,10 @@ router.put("/users/:id/role", async (req, res) => {
     const { isAdmin } = req.body;
 
     // Validate input
-    if (typeof isAdmin !== 'boolean') {
+    if (typeof isAdmin !== "boolean") {
       return res.status(400).json({
         success: false,
-        error: "isAdmin field must be a boolean"
+        error: "isAdmin field must be a boolean",
       });
     }
 
@@ -65,7 +65,7 @@ router.put("/users/:id/role", async (req, res) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        error: "User not found"
+        error: "User not found",
       });
     }
 
@@ -74,19 +74,18 @@ router.put("/users/:id/role", async (req, res) => {
     await user.save();
 
     // Return updated user (without password)
-    const updatedUser = await User.findById(id).select('-password');
+    const updatedUser = await User.findById(id).select("-password");
 
     res.json({
       success: true,
-      message: `User ${isAdmin ? 'promoted to admin' : 'role changed to user'}`,
-      user: updatedUser
+      message: `User ${isAdmin ? "promoted to admin" : "role changed to user"}`,
+      user: updatedUser,
     });
-
   } catch (error) {
     console.error("Update user role error:", error);
     res.status(500).json({
       success: false,
-      error: "Failed to update user role"
+      error: "Failed to update user role",
     });
   }
 });
@@ -102,7 +101,9 @@ router.get("/notifications", async (req, res) => {
     res.json({ success: true, notifications });
   } catch (error) {
     console.error("Error fetching notifications:", error);
-    res.status(500).json({ success: false, error: "Failed to fetch notifications" });
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch notifications" });
   }
 });
 
@@ -122,13 +123,18 @@ router.put("/notifications/:id/read", async (req, res) => {
   try {
     const { id } = req.params;
     const notif = await Notification.findById(id);
-    if (!notif) return res.status(404).json({ success: false, error: "Notification not found" });
+    if (!notif)
+      return res
+        .status(404)
+        .json({ success: false, error: "Notification not found" });
     notif.read = true;
     await notif.save();
     res.json({ success: true, notification: notif });
   } catch (error) {
     console.error("Error marking notification read:", error);
-    res.status(500).json({ success: false, error: "Failed to update notification" });
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to update notification" });
   }
 });
 
@@ -139,20 +145,19 @@ router.get("/orders", async (req, res) => {
       .populate("userId", "username email isAdmin")
       .sort({ createdAt: -1 });
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       count: orders.length,
-      orders 
+      orders,
     });
   } catch (error) {
     console.error("Error fetching all orders:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Failed to fetch orders", 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch orders",
+      error: error.message,
     });
   }
 });
 
 module.exports = router;
-

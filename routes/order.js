@@ -19,17 +19,17 @@ router.get("/", async (req, res) => {
       .populate("userId", "username email isAdmin") // Populate user details
       .sort({ createdAt: -1 }); // Sort by newest first
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       count: orders.length,
-      orders 
+      orders,
     });
   } catch (error) {
     console.error("Error fetching orders:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Failed to fetch orders", 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch orders",
+      error: error.message,
     });
   }
 });
@@ -40,13 +40,20 @@ router.put("/:orderId/status", async (req, res) => {
     const { orderId } = req.params;
     const { status } = req.body;
 
-    console.log('Updating order status:', orderId, status); // Debug log
+    console.log("Updating order status:", orderId, status); // Debug log
     // Validate status
-    const validStatuses = ["pending", "confirmed", "processing", "cancelled", "shipped", "delivered"];
+    const validStatuses = [
+      "pending",
+      "confirmed",
+      "processing",
+      "cancelled",
+      "shipped",
+      "delivered",
+    ];
     if (!status || !validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
-        message: `Invalid status. Valid statuses are: ${validStatuses.join(", ")}`
+        message: `Invalid status. Valid statuses are: ${validStatuses.join(", ")}`,
       });
     }
 
@@ -55,7 +62,7 @@ router.put("/:orderId/status", async (req, res) => {
     if (!order) {
       return res.status(404).json({
         success: false,
-        message: "Order not found"
+        message: "Order not found",
       });
     }
 
@@ -65,21 +72,22 @@ router.put("/:orderId/status", async (req, res) => {
     await order.save();
 
     // Return the updated order with user details
-    const updatedOrder = await Order.findById(orderId)
-      .populate("userId", "username email");
+    const updatedOrder = await Order.findById(orderId).populate(
+      "userId",
+      "username email",
+    );
 
     res.json({
       success: true,
       message: `Order status updated to ${status}`,
-      order: updatedOrder
+      order: updatedOrder,
     });
-
   } catch (error) {
     console.error("Error updating order status:", error);
     res.status(500).json({
       success: false,
       message: "Failed to update order status",
-      error: error.message
+      error: error.message,
     });
   }
 });
