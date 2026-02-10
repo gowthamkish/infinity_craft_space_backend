@@ -39,18 +39,20 @@ router.post("/", protect, async (req, res) => {
     if (items && items.length > 0) {
       const stockErrors = [];
       for (const item of items) {
-        if (item.productId) {
-          const product = await Product.findById(item.productId);
+        // Support both item.productId and item.product._id (frontend sends item.product._id)
+        const productId = item.productId || (item.product && item.product._id);
+        if (productId) {
+          const product = await Product.findById(productId);
           if (product && product.trackInventory) {
             if (product.stock <= 0) {
               stockErrors.push({
-                productId: item.productId,
+                productId: productId,
                 name: product.name,
                 error: "Out of stock",
               });
             } else if (product.stock < item.quantity) {
               stockErrors.push({
-                productId: item.productId,
+                productId: productId,
                 name: product.name,
                 error: `Only ${product.stock} available`,
                 availableStock: product.stock,
@@ -81,9 +83,12 @@ router.post("/", protect, async (req, res) => {
       for (const item of items) {
         let productData = null;
 
+        // Support both item.productId and item.product._id (frontend sends item.product._id)
+        const productId = item.productId || (item.product && item.product._id);
+
         // If productId is provided, fetch full product details from DB
-        if (item.productId) {
-          productData = await Product.findById(item.productId);
+        if (productId) {
+          productData = await Product.findById(productId);
         }
 
         // Use fetched product data or fallback to provided data
@@ -100,12 +105,26 @@ router.post("/", protect, async (req, res) => {
             quantity: item.quantity || 1,
             totalPrice: productData.price * (item.quantity || 1),
           });
+        } else if (item.product) {
+          // Frontend sends item.product with full product details
+          orderItems.push({
+            product: {
+              _id: item.product._id || null,
+              name: item.product.name || "Product",
+              price: item.product.price || 0,
+              description: item.product.description || "",
+              category: item.product.category || "General",
+              subCategory: item.product.subCategory || "Product",
+            },
+            quantity: item.quantity || 1,
+            totalPrice: (item.product.price || 0) * (item.quantity || 1),
+          });
         } else {
           // Only use defaults if no product found and proper data not provided
-          if (item.productId || item.name) {
+          if (productId || item.name) {
             orderItems.push({
               product: {
-                _id: item.productId || null,
+                _id: productId || null,
                 name: item.name || "Product",
                 price: item.price || 0,
                 description: item.description || "",

@@ -1,5 +1,6 @@
 const express = require("express");
 const Order = require("../models/Order");
+const Product = require("../models/Product");
 const router = express.Router();
 
 router.post("/", async (req, res) => {
@@ -66,10 +67,40 @@ router.put("/:orderId/status", async (req, res) => {
       });
     }
 
+    // Store old status to check for stock restoration
+    const oldStatus = order.status;
+
     // Update the order status and timestamp
     order.status = status;
     order.updatedAt = new Date();
     await order.save();
+
+    // Restore stock if order is being cancelled (and was previously confirmed/processing/shipped)
+    if (
+      status === "cancelled" &&
+      ["confirmed", "processing", "shipped"].includes(oldStatus)
+    ) {
+      try {
+        for (const item of order.items) {
+          if (item.product && item.product._id) {
+            const product = await Product.findById(item.product._id);
+            if (product && product.trackInventory) {
+              const newStock = product.stock + item.quantity;
+              await Product.findByIdAndUpdate(item.product._id, {
+                stock: newStock,
+                updatedAt: new Date(),
+              });
+              console.log(
+                `Stock restored for ${product.name}: ${product.stock} -> ${newStock} (Order ${orderId} cancelled)`,
+              );
+            }
+          }
+        }
+      } catch (stockError) {
+        console.warn("Warning: Could not restore stock -", stockError.message);
+        // Don't fail the order update if stock restoration fails
+      }
+    }
 
     // Return the updated order with user details
     const updatedOrder = await Order.findById(orderId).populate(
