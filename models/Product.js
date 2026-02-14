@@ -10,6 +10,7 @@ const ProductSchema = new mongoose.Schema({
   stock: { type: Number, default: 0, min: 0 },
   lowStockThreshold: { type: Number, default: 5, min: 0 }, // Show "Only X left" when stock <= this value
   trackInventory: { type: Boolean, default: true }, // Enable/disable inventory tracking
+  estimatedDelivery: { type: Number, default: 5 }, // Estimated delivery in days
   images: [
     {
       url: { type: String }, // Cloudinary URL

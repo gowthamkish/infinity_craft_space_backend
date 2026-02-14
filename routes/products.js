@@ -152,6 +152,10 @@ router.post("/", protect, isAdmin, productValidation, async (req, res) => {
           : 5,
       trackInventory:
         req.body.trackInventory !== undefined ? req.body.trackInventory : true,
+      estimatedDelivery:
+        req.body.estimatedDelivery !== undefined
+          ? parseInt(req.body.estimatedDelivery)
+          : 5,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -248,6 +252,10 @@ router.post(
           req.body.trackInventory !== undefined
             ? req.body.trackInventory
             : true,
+        estimatedDelivery:
+          req.body.estimatedDelivery !== undefined
+            ? parseInt(req.body.estimatedDelivery)
+            : 5,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -388,6 +396,8 @@ router.put("/:id", protect, isAdmin, async (req, res) => {
       updateData.lowStockThreshold = parseInt(req.body.lowStockThreshold);
     if (req.body.trackInventory !== undefined)
       updateData.trackInventory = req.body.trackInventory;
+    if (req.body.estimatedDelivery !== undefined)
+      updateData.estimatedDelivery = parseInt(req.body.estimatedDelivery);
 
     // Handle multiple images update
     if (images && Array.isArray(images) && images.length > 0) {
