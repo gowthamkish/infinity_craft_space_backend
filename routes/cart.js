@@ -3,6 +3,102 @@ const Cart = require("../models/Cart");
 const Product = require("../models/Product");
 const router = express.Router();
 
+// Get user's cart with populated product details
+router.get("/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const cart = await Cart.findOne({ userId }).populate({
+      path: "items.productId",
+      select:
+        "name price description image category subCategory stock trackInventory",
+    });
+
+    if (!cart) {
+      return res.json({ success: true, items: [] });
+    }
+
+    // Transform cart items to match frontend format
+    const items = cart.items
+      .filter((item) => item.productId) // Filter out items with deleted products
+      .map((item) => ({
+        product: {
+          _id: item.productId._id,
+          name: item.productId.name,
+          price: item.productId.price,
+          description: item.productId.description,
+          image: item.productId.image,
+          category: item.productId.category,
+          subCategory: item.productId.subCategory,
+          stock: item.productId.stock,
+          trackInventory: item.productId.trackInventory,
+        },
+        quantity: item.quantity,
+        totalPrice: item.quantity * item.productId.price,
+      }));
+
+    res.json({ success: true, items });
+  } catch (error) {
+    console.error("Get cart error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Sync entire cart from frontend (replace cart contents)
+router.post("/sync", async (req, res) => {
+  try {
+    const { userId, items } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID is required",
+      });
+    }
+
+    // Transform frontend format to database format
+    const cartItems = items.map((item) => ({
+      productId: item.product._id,
+      quantity: item.quantity,
+    }));
+
+    let cart = await Cart.findOne({ userId });
+
+    if (!cart) {
+      cart = new Cart({ userId, items: cartItems });
+    } else {
+      cart.items = cartItems;
+    }
+
+    await cart.save();
+    res.json({ success: true, message: "Cart synced successfully" });
+  } catch (error) {
+    console.error("Cart sync error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// Clear user's cart
+router.delete("/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    await Cart.findOneAndUpdate({ userId }, { items: [] });
+    res.json({ success: true, message: "Cart cleared" });
+  } catch (error) {
+    console.error("Clear cart error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 // Add to cart with stock validation
 router.post("/add", async (req, res) => {
   try {

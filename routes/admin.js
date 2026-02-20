@@ -397,4 +397,263 @@ router.get("/analytics", async (req, res) => {
   }
 });
 
+// Product Prediction API - Predicts which products will be ordered this month
+router.get("/predictions", async (req, res) => {
+  try {
+    // Get last month's date range
+    const now = new Date();
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthEnd = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      0,
+      23,
+      59,
+      59,
+    );
+
+    // Get two months ago for trend comparison
+    const twoMonthsAgoStart = new Date(
+      now.getFullYear(),
+      now.getMonth() - 2,
+      1,
+    );
+    const twoMonthsAgoEnd = new Date(
+      now.getFullYear(),
+      now.getMonth() - 1,
+      0,
+      23,
+      59,
+      59,
+    );
+
+    // Days elapsed in current month
+    const daysInCurrentMonth = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      0,
+    ).getDate();
+    const daysElapsed = now.getDate();
+    const projectionFactor = daysInCurrentMonth / daysElapsed;
+
+    // Get last month's product orders
+    const lastMonthOrders = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: lastMonthStart, $lte: lastMonthEnd },
+          status: { $in: ["confirmed", "processing", "shipped", "delivered"] },
+        },
+      },
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: {
+            productId: "$items.product._id",
+            productName: "$items.product.name",
+            category: "$items.product.category",
+          },
+          lastMonthQuantity: { $sum: "$items.quantity" },
+          lastMonthRevenue: { $sum: "$items.totalPrice" },
+          orderCount: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // Get two months ago product orders for trend analysis
+    const twoMonthsAgoOrders = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: twoMonthsAgoStart, $lte: twoMonthsAgoEnd },
+          status: { $in: ["confirmed", "processing", "shipped", "delivered"] },
+        },
+      },
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: {
+            productId: "$items.product._id",
+            productName: "$items.product.name",
+          },
+          quantity: { $sum: "$items.quantity" },
+        },
+      },
+    ]);
+
+    // Get current month's actual orders so far
+    const currentMonthOrders = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: currentMonthStart },
+          status: { $in: ["confirmed", "processing", "shipped", "delivered"] },
+        },
+      },
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: {
+            productId: "$items.product._id",
+            productName: "$items.product.name",
+          },
+          currentQuantity: { $sum: "$items.quantity" },
+          currentRevenue: { $sum: "$items.totalPrice" },
+        },
+      },
+    ]);
+
+    // Create lookup maps
+    const twoMonthsAgoMap = new Map();
+    twoMonthsAgoOrders.forEach((item) => {
+      twoMonthsAgoMap.set(item._id.productName, item.quantity);
+    });
+
+    const currentMonthMap = new Map();
+    currentMonthOrders.forEach((item) => {
+      currentMonthMap.set(item._id.productName, {
+        quantity: item.currentQuantity,
+        revenue: item.currentRevenue,
+      });
+    });
+
+    // Calculate predictions with trend analysis
+    const predictions = lastMonthOrders.map((item) => {
+      const productName = item._id.productName;
+      const lastMonthQty = item.lastMonthQuantity;
+      const twoMonthsAgoQty = twoMonthsAgoMap.get(productName) || 0;
+      const currentMonthData = currentMonthMap.get(productName) || {
+        quantity: 0,
+        revenue: 0,
+      };
+
+      // Calculate growth trend (comparing last month to two months ago)
+      let trendPercentage = 0;
+      if (twoMonthsAgoQty > 0) {
+        trendPercentage =
+          ((lastMonthQty - twoMonthsAgoQty) / twoMonthsAgoQty) * 100;
+      } else if (lastMonthQty > 0) {
+        trendPercentage = 100; // New product, 100% growth
+      }
+
+      // Apply trend to prediction - using weighted moving average
+      // Weight: 60% last month, 40% trend-adjusted
+      const trendMultiplier = 1 + trendPercentage / 100;
+      const basePrediction = lastMonthQty;
+      const trendAdjustedPrediction =
+        lastMonthQty * Math.max(0.5, Math.min(2, trendMultiplier));
+
+      // Final prediction: weighted average
+      const predictedQuantity = Math.round(
+        basePrediction * 0.6 + trendAdjustedPrediction * 0.4,
+      );
+
+      // Project current month to full month based on days elapsed
+      const projectedCurrentMonth = Math.round(
+        currentMonthData.quantity * projectionFactor,
+      );
+
+      // Calculate confidence based on data availability and consistency
+      let confidence = "Medium";
+      if (twoMonthsAgoQty > 0 && lastMonthQty > 0) {
+        const variance = Math.abs(trendPercentage);
+        if (variance < 20) confidence = "High";
+        else if (variance > 50) confidence = "Low";
+      } else if (twoMonthsAgoQty === 0) {
+        confidence = "Low";
+      }
+
+      return {
+        productId: item._id.productId,
+        productName: productName || "Unknown Product",
+        category: item._id.category || "Uncategorized",
+        lastMonthQuantity: lastMonthQty,
+        lastMonthRevenue: item.lastMonthRevenue,
+        twoMonthsAgoQuantity: twoMonthsAgoQty,
+        currentMonthQuantity: currentMonthData.quantity,
+        projectedCurrentMonth: projectedCurrentMonth,
+        predictedQuantity: predictedQuantity,
+        trendPercentage: Math.round(trendPercentage * 10) / 10,
+        confidence: confidence,
+        orderFrequency: item.orderCount,
+      };
+    });
+
+    // Sort by predicted quantity descending
+    predictions.sort((a, b) => b.predictedQuantity - a.predictedQuantity);
+
+    // Get top 10 predictions
+    const topPredictions = predictions.slice(0, 10);
+
+    // Category-wise prediction summary
+    const categoryPredictions = predictions.reduce((acc, item) => {
+      const cat = item.category;
+      if (!acc[cat]) {
+        acc[cat] = {
+          category: cat,
+          predictedQuantity: 0,
+          lastMonthQuantity: 0,
+          productCount: 0,
+        };
+      }
+      acc[cat].predictedQuantity += item.predictedQuantity;
+      acc[cat].lastMonthQuantity += item.lastMonthQuantity;
+      acc[cat].productCount += 1;
+      return acc;
+    }, {});
+
+    const categoryPredictionList = Object.values(categoryPredictions).sort(
+      (a, b) => b.predictedQuantity - a.predictedQuantity,
+    );
+
+    // Calculate overall prediction accuracy indicator
+    const totalLastMonth = predictions.reduce(
+      (sum, p) => sum + p.lastMonthQuantity,
+      0,
+    );
+    const totalPredicted = predictions.reduce(
+      (sum, p) => sum + p.predictedQuantity,
+      0,
+    );
+    const totalCurrentActual = predictions.reduce(
+      (sum, p) => sum + p.currentMonthQuantity,
+      0,
+    );
+    const totalProjected = predictions.reduce(
+      (sum, p) => sum + p.projectedCurrentMonth,
+      0,
+    );
+
+    res.json({
+      success: true,
+      metadata: {
+        lastMonthRange: {
+          start: lastMonthStart.toISOString(),
+          end: lastMonthEnd.toISOString(),
+        },
+        currentMonthProgress: {
+          daysElapsed,
+          totalDays: daysInCurrentMonth,
+          percentComplete: Math.round((daysElapsed / daysInCurrentMonth) * 100),
+        },
+        summary: {
+          totalProductsAnalyzed: predictions.length,
+          totalLastMonthOrders: totalLastMonth,
+          totalPredictedThisMonth: totalPredicted,
+          currentMonthActualSoFar: totalCurrentActual,
+          projectedCurrentMonth: totalProjected,
+        },
+      },
+      predictions: topPredictions,
+      allPredictions: predictions,
+      categoryPredictions: categoryPredictionList,
+    });
+  } catch (error) {
+    console.error("Predictions API error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to generate predictions",
+      message: error.message,
+    });
+  }
+});
+
 module.exports = router;

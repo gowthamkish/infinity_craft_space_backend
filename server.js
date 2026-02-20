@@ -50,6 +50,7 @@ app.use("/api/products", productRoutes);
 app.use("/api/admin", protect, isAdmin, adminRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api/orders", protect, require("./routes/order"));
+app.use("/api/cart", protect, require("./routes/cart"));
 app.use("/api/payment", strictLimiter, require("./routes/payment")); // Strict limiting for payments
 app.use("/api/reviews", require("./routes/reviews"));
 
