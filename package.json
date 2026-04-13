@@ -15,7 +15,7 @@
     "nodemailer": "^6.9.7",
     "node-cron": "^3.0.2",
     "csv-parser": "^3.0.0",
-    "json2csv": "^7.0.0"
+    "json2csv": "^5.0.7"
   },
   "name": "backend",
   "version": "1.0.0",
