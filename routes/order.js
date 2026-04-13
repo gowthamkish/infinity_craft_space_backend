@@ -70,10 +70,23 @@ router.put("/:orderId/status", async (req, res) => {
     // Store old status to check for stock restoration
     const oldStatus = order.status;
 
-    // Update the order status and timestamp
-    order.status = status;
-    order.updatedAt = new Date();
-    await order.save();
+    // Use updateOne to avoid schema validation issues
+    const result = await Order.updateOne(
+      { _id: orderId },
+      {
+        $set: {
+          status: status,
+          updatedAt: new Date(),
+        },
+      },
+    );
+
+    if (!result.acknowledged) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update order status",
+      });
+    }
 
     // Restore stock if order is being cancelled (and was previously confirmed/processing/shipped)
     if (

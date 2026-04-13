@@ -13,6 +13,13 @@ const {
   productUpdateValidation,
   mongoIdValidation,
 } = require("../middlewares/validators");
+const {
+  getRecommendationsByProductId,
+  getPopularProducts,
+  getTrendingProducts,
+  getPersonalizedRecommendations,
+  getBoughtTogether,
+} = require("../utils/recommendations");
 
 // Get all products
 router.get("/", async (req, res) => {
@@ -721,6 +728,143 @@ router.post("/update-stock", protect, async (req, res) => {
     });
   } catch (err) {
     console.error("Stock update error:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+});
+
+/**
+ * RECOMMENDATIONS ENDPOINTS
+ */
+
+// Get recommendations for a specific product
+// GET /api/products/:id/recommendations?limit=6
+router.get("/:id/recommendations", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const limit = Math.min(parseInt(req.query.limit) || 6, 20); // Max 20
+
+    // Validate product exists
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: "Product not found",
+      });
+    }
+
+    const recommendations = await getRecommendationsByProductId(id, limit);
+
+    res.json({
+      success: true,
+      count: recommendations.length,
+      data: recommendations,
+    });
+  } catch (err) {
+    console.error("Error fetching recommendations:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+});
+
+// Get popular products
+// GET /api/products/popular/list?limit=6&minRating=3.5
+router.get("/popular/list", async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 6, 20);
+    const minRating = parseFloat(req.query.minRating) || 3.5;
+
+    const products = await getPopularProducts(limit, minRating);
+
+    res.json({
+      success: true,
+      count: products.length,
+      data: products,
+    });
+  } catch (err) {
+    console.error("Error fetching popular products:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+});
+
+// Get trending products
+// GET /api/products/trending/list?limit=6&days=30
+router.get("/trending/list", async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 6, 20);
+    const days = parseInt(req.query.days) || 30;
+
+    const products = await getTrendingProducts(limit, days);
+
+    res.json({
+      success: true,
+      count: products.length,
+      data: products,
+    });
+  } catch (err) {
+    console.error("Error fetching trending products:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+});
+
+// Get frequently bought together
+// GET /api/products/:id/bought-together?limit=5
+router.get("/:id/bought-together", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const limit = Math.min(parseInt(req.query.limit) || 5, 15);
+
+    // Validate product exists
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: "Product not found",
+      });
+    }
+
+    const products = await getBoughtTogether(id, limit);
+
+    res.json({
+      success: true,
+      count: products.length,
+      data: products,
+    });
+  } catch (err) {
+    console.error("Error fetching bought together products:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+});
+
+// Get personalized recommendations (requires auth)
+// GET /api/products/personalized/recommendations?limit=6
+router.get("/personalized/recommendations", protect, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const limit = Math.min(parseInt(req.query.limit) || 6, 20);
+
+    const products = await getPersonalizedRecommendations(userId, limit);
+
+    res.json({
+      success: true,
+      count: products.length,
+      products,
+    });
+  } catch (err) {
+    console.error("Error fetching personalized recommendations:", err);
     res.status(500).json({
       success: false,
       error: err.message,

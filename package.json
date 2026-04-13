@@ -11,7 +11,11 @@
     "mongoose": "^8.17.0",
     "multer": "^2.0.2",
     "multer-storage-cloudinary": "^4.0.0",
-    "razorpay": "^2.9.6"
+    "razorpay": "^2.9.6",
+    "nodemailer": "^6.9.7",
+    "node-cron": "^3.0.2",
+    "csv-parser": "^3.0.0",
+    "json2csv": "^6.0.0"
   },
   "name": "backend",
   "version": "1.0.0",

@@ -185,13 +185,19 @@ router.post("/", protect, async (req, res) => {
       zipCode: "000000",
     };
 
+    // Calculate subtotal from order items
+    const calculatedSubtotal = orderItems.reduce((sum, item) => {
+      return sum + (item.totalPrice || 0);
+    }, 0);
+
     // Create order in database
     const order = new Order({
       userId,
       items: orderItems,
+      subtotal: calculatedSubtotal,
       totalAmount,
       currency: currency || "INR",
-      shippingAddress: shippingAddress,
+      shippingAddress: shippingAddress || defaultShippingAddress,
       status: "pending",
     });
 
