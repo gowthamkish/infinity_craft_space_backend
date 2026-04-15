@@ -5,7 +5,6 @@ const {
   uploadBase64Image,
   uploadMultipleBase64Images,
   deleteImage,
-  deleteMultipleImages,
 } = require("../config/cloudinary");
 const { protect, isAdmin } = require("../middlewares/authMiddleware");
 const {
@@ -14,51 +13,28 @@ const {
   mongoIdValidation,
 } = require("../middlewares/validators");
 const {
-  getRecommendationsByProductId,
-  getPopularProducts,
-  getTrendingProducts,
-  getPersonalizedRecommendations,
-  getBoughtTogether,
-} = require("../utils/recommendations");
+  getAllProducts,
+  getProduct,
+  deleteProduct,
+  checkStock,
+  updateStock,
+  getRecommendations,
+  getPopular,
+  getTrending,
+  getBoughtTogetherProducts,
+  getPersonalized,
+} = require("../controllers/productController");
 
-// Get all products
-router.get("/", async (req, res) => {
-  try {
-    const products = await Product.find();
-    res.json({
-      success: true,
-      count: products.length,
-      products,
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-});
-
-// Get single product
-router.get("/:id", async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        error: "Product not found",
-      });
-    }
-    res.json({
-      success: true,
-      product,
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-});
+router.get("/", getAllProducts);
+router.get("/popular/list", getPopular);
+router.get("/trending/list", getTrending);
+router.get("/personalized/recommendations", protect, getPersonalized);
+router.get("/:id", getProduct);
+router.delete("/:id", protect, isAdmin, deleteProduct);
+router.post("/check-stock", checkStock);
+router.post("/update-stock", protect, updateStock);
+router.get("/:id/recommendations", getRecommendations);
+router.get("/:id/bought-together", getBoughtTogetherProducts);
 
 // Add product with multiple images (base64) - Admin only
 router.post("/", protect, isAdmin, productValidation, async (req, res) => {
@@ -541,331 +517,6 @@ router.put("/:id", protect, isAdmin, async (req, res) => {
   } catch (err) {
     console.error("Product update error:", err);
     res.status(400).json({
-      success: false,
-      error: err.message,
-    });
-  }
-});
-
-// Delete product - Admin only
-router.delete("/:id", protect, isAdmin, async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        error: "Product not found",
-      });
-    }
-
-    // Delete all images from Cloudinary if they exist
-    const imagesToDelete = [];
-
-    // Collect multiple images
-    if (product.images && product.images.length > 0) {
-      const publicIds = product.images
-        .map((img) => img.publicId)
-        .filter(Boolean);
-      imagesToDelete.push(...publicIds);
-    }
-
-    // Collect single image for backward compatibility
-    if (product.image && product.image.publicId) {
-      // Only add if not already in the images array
-      const alreadyIncluded = imagesToDelete.includes(product.image.publicId);
-      if (!alreadyIncluded) {
-        imagesToDelete.push(product.image.publicId);
-      }
-    }
-
-    // Delete images from Cloudinary
-    if (imagesToDelete.length > 0) {
-      try {
-        await deleteMultipleImages(imagesToDelete);
-        console.log("Images deleted from Cloudinary:", imagesToDelete);
-      } catch (imageError) {
-        console.error("Failed to delete images from Cloudinary:", imageError);
-        // Continue with product deletion even if image deletion fails
-      }
-    }
-
-    await Product.findByIdAndDelete(req.params.id);
-
-    res.json({
-      success: true,
-      message: "Product and associated images deleted successfully",
-    });
-  } catch (err) {
-    console.error("Product deletion error:", err);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-});
-
-// Check stock availability for multiple products
-router.post("/check-stock", async (req, res) => {
-  try {
-    const { items } = req.body; // Array of { productId, quantity }
-
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: "Items array is required",
-      });
-    }
-
-    const stockStatus = [];
-    let allAvailable = true;
-
-    for (const item of items) {
-      const product = await Product.findById(item.productId);
-
-      if (!product) {
-        stockStatus.push({
-          productId: item.productId,
-          available: false,
-          error: "Product not found",
-        });
-        allAvailable = false;
-        continue;
-      }
-
-      const isAvailable =
-        !product.trackInventory || product.stock >= item.quantity;
-      const isLowStock =
-        product.trackInventory &&
-        product.stock <= product.lowStockThreshold &&
-        product.stock > 0;
-      const isOutOfStock = product.trackInventory && product.stock <= 0;
-
-      stockStatus.push({
-        productId: item.productId,
-        name: product.name,
-        requestedQuantity: item.quantity,
-        availableStock: product.trackInventory ? product.stock : null,
-        trackInventory: product.trackInventory,
-        available: isAvailable,
-        isLowStock,
-        isOutOfStock,
-        lowStockThreshold: product.lowStockThreshold,
-      });
-
-      if (!isAvailable) {
-        allAvailable = false;
-      }
-    }
-
-    res.json({
-      success: true,
-      allAvailable,
-      items: stockStatus,
-    });
-  } catch (err) {
-    console.error("Stock check error:", err);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-});
-
-// Update stock for multiple products (used after payment)
-router.post("/update-stock", protect, async (req, res) => {
-  try {
-    const { items } = req.body; // Array of { productId, quantity }
-
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: "Items array is required",
-      });
-    }
-
-    const results = [];
-
-    for (const item of items) {
-      const product = await Product.findById(item.productId);
-
-      if (!product) {
-        results.push({
-          productId: item.productId,
-          success: false,
-          error: "Product not found",
-        });
-        continue;
-      }
-
-      if (product.trackInventory) {
-        const newStock = Math.max(0, product.stock - item.quantity);
-        await Product.findByIdAndUpdate(item.productId, {
-          stock: newStock,
-          updatedAt: new Date(),
-        });
-
-        results.push({
-          productId: item.productId,
-          name: product.name,
-          previousStock: product.stock,
-          quantityDeducted: item.quantity,
-          newStock,
-          success: true,
-        });
-      } else {
-        results.push({
-          productId: item.productId,
-          name: product.name,
-          success: true,
-          message: "Inventory tracking disabled for this product",
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      results,
-    });
-  } catch (err) {
-    console.error("Stock update error:", err);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-});
-
-/**
- * RECOMMENDATIONS ENDPOINTS
- */
-
-// Get recommendations for a specific product
-// GET /api/products/:id/recommendations?limit=6
-router.get("/:id/recommendations", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const limit = Math.min(parseInt(req.query.limit) || 6, 20); // Max 20
-
-    // Validate product exists
-    const product = await Product.findById(id);
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        error: "Product not found",
-      });
-    }
-
-    const recommendations = await getRecommendationsByProductId(id, limit);
-
-    res.json({
-      success: true,
-      count: recommendations.length,
-      data: recommendations,
-    });
-  } catch (err) {
-    console.error("Error fetching recommendations:", err);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-});
-
-// Get popular products
-// GET /api/products/popular/list?limit=6&minRating=3.5
-router.get("/popular/list", async (req, res) => {
-  try {
-    const limit = Math.min(parseInt(req.query.limit) || 6, 20);
-    const minRating = parseFloat(req.query.minRating) || 3.5;
-
-    const products = await getPopularProducts(limit, minRating);
-
-    res.json({
-      success: true,
-      count: products.length,
-      data: products,
-    });
-  } catch (err) {
-    console.error("Error fetching popular products:", err);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-});
-
-// Get trending products
-// GET /api/products/trending/list?limit=6&days=30
-router.get("/trending/list", async (req, res) => {
-  try {
-    const limit = Math.min(parseInt(req.query.limit) || 6, 20);
-    const days = parseInt(req.query.days) || 30;
-
-    const products = await getTrendingProducts(limit, days);
-
-    res.json({
-      success: true,
-      count: products.length,
-      data: products,
-    });
-  } catch (err) {
-    console.error("Error fetching trending products:", err);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-});
-
-// Get frequently bought together
-// GET /api/products/:id/bought-together?limit=5
-router.get("/:id/bought-together", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const limit = Math.min(parseInt(req.query.limit) || 5, 15);
-
-    // Validate product exists
-    const product = await Product.findById(id);
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        error: "Product not found",
-      });
-    }
-
-    const products = await getBoughtTogether(id, limit);
-
-    res.json({
-      success: true,
-      count: products.length,
-      data: products,
-    });
-  } catch (err) {
-    console.error("Error fetching bought together products:", err);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-});
-
-// Get personalized recommendations (requires auth)
-// GET /api/products/personalized/recommendations?limit=6
-router.get("/personalized/recommendations", protect, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const limit = Math.min(parseInt(req.query.limit) || 6, 20);
-
-    const products = await getPersonalizedRecommendations(userId, limit);
-
-    res.json({
-      success: true,
-      count: products.length,
-      products,
-    });
-  } catch (err) {
-    console.error("Error fetching personalized recommendations:", err);
-    res.status(500).json({
       success: false,
       error: err.message,
     });

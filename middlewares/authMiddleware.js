@@ -2,8 +2,8 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 
 // JWT token expiry settings
-const ACCESS_TOKEN_EXPIRY = "7d"; // 7 days
-const REFRESH_TOKEN_EXPIRY = "30d"; // 30 days
+const ACCESS_TOKEN_EXPIRY = "15m"; // 15 minutes (was 7d — too long)
+const REFRESH_TOKEN_EXPIRY = "7d"; // 7 days (was 30d — too long)
 
 // Generate access token
 const generateAccessToken = (userId) => {
@@ -14,9 +14,12 @@ const generateAccessToken = (userId) => {
 
 // Generate refresh token
 const generateRefreshToken = (userId) => {
+  if (!process.env.JWT_REFRESH_SECRET) {
+    throw new Error("JWT_REFRESH_SECRET must be set separately from JWT_SECRET");
+  }
   return jwt.sign(
     { id: userId, type: "refresh" },
-    process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
+    process.env.JWT_REFRESH_SECRET,
     { expiresIn: REFRESH_TOKEN_EXPIRY },
   );
 };
@@ -31,12 +34,18 @@ const generateTokens = (userId) => {
 
 const protect = async (req, res, next) => {
   let token;
-  if (
+  // Prefer httpOnly cookie, fall back to Authorization header
+  if (req.cookies && req.cookies.token) {
+    token = req.cookies.token;
+  } else if (
     req.headers.authorization &&
     req.headers.authorization.startsWith("Bearer")
   ) {
+    token = req.headers.authorization.split(" ")[1];
+  }
+
+  if (token) {
     try {
-      token = req.headers.authorization.split(" ")[1];
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
       // Check if token is access token
@@ -75,19 +84,40 @@ const protect = async (req, res, next) => {
   }
 };
 
+// Cookie options helper
+// Cross-domain (Vercel frontend <-> Render backend) requires sameSite: "none" + secure: true
+// For localhost dev: sameSite: "lax", secure: false
+const isProduction = process.env.NODE_ENV === "production";
+const cookieOptions = (maxAgeMs) => ({
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? "none" : "lax",
+  maxAge: maxAgeMs,
+});
+
+// Clear auth cookies (used on logout)
+const clearAuthCookies = (res) => {
+  res.clearCookie("token", cookieOptions(0));
+  res.clearCookie("refreshToken", cookieOptions(0));
+};
+
+// Set auth cookies
+const setAuthCookies = (res, tokens) => {
+  res.cookie("token", tokens.accessToken, cookieOptions(15 * 60 * 1000)); // 15 min
+  res.cookie("refreshToken", tokens.refreshToken, cookieOptions(7 * 24 * 60 * 60 * 1000)); // 7 days
+};
+
 // Middleware to refresh access token using refresh token
 const refreshAccessToken = async (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    // Read from cookie first, then body (for backward compatibility)
+    const refreshToken = (req.cookies && req.cookies.refreshToken) || req.body.refreshToken;
 
     if (!refreshToken) {
       return res.status(400).json({ error: "Refresh token required" });
     }
 
-    const decoded = jwt.verify(
-      refreshToken,
-      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
-    );
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
 
     // Check if it's a refresh token
     if (decoded.type !== "refresh") {
@@ -100,12 +130,13 @@ const refreshAccessToken = async (req, res) => {
       return res.status(401).json({ error: "User not found" });
     }
 
-    // Generate new tokens
+    // Generate new tokens (rotation)
     const tokens = generateTokens(user._id);
 
+    // Set new httpOnly cookies
+    setAuthCookies(res, tokens);
+
     res.json({
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
       user: {
         id: user._id,
         username: user.username,
@@ -163,6 +194,8 @@ module.exports = {
   generateRefreshToken,
   generateTokens,
   refreshAccessToken,
+  setAuthCookies,
+  clearAuthCookies,
   ACCESS_TOKEN_EXPIRY,
   REFRESH_TOKEN_EXPIRY,
 };

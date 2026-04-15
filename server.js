@@ -1,6 +1,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
 require("dotenv").config();
 const authRoutes = require("./routes/auth");
 const productRoutes = require("./routes/products");
@@ -15,7 +16,25 @@ const app = express();
 // Trust proxy for rate limiting behind reverse proxy (Render, Heroku, etc.)
 app.set("trust proxy", 1);
 
-app.use(cors());
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
+  : ["http://localhost:5173", "http://localhost:3000"];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. mobile apps, curl, same-origin)
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS: origin ${origin} not allowed`));
+      }
+    },
+    credentials: true, // Required for httpOnly cookies
+  }),
+);
+
+app.use(cookieParser());
 
 // Apply global rate limiting
 app.use("/api/", apiLimiter);
