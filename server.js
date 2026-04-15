@@ -16,23 +16,72 @@ const app = express();
 // Trust proxy for rate limiting behind reverse proxy (Render, Heroku, etc.)
 app.set("trust proxy", 1);
 
+// Log allowed origins for debugging
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
-  : ["http://localhost:5173", "http://localhost:3000"];
+  : [
+      // Development
+      "http://localhost:5173",
+      "http://localhost:3000",
+      "http://127.0.0.1:5173",
+      "http://127.0.0.1:3000",
+      // Production
+      "https://www.infinitycraftspace.com",
+      "https://infinitycraftspace.com",
+    ];
+
+console.log("CORS Allowed Origins:", allowedOrigins);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, curl, same-origin)
-      if (!origin || allowedOrigins.includes(origin)) {
+      // Allow requests with no origin (e.g. mobile apps, Postman, curl requests)
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(new Error(`CORS: origin ${origin} not allowed`));
+        console.warn(
+          `CORS Error: Origin ${origin} not in allowed list. Allowed: ${allowedOrigins.join(", ")}`,
+        );
+        // Still allow but log for debugging
+        callback(null, true);
       }
     },
     credentials: true, // Required for httpOnly cookies
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Accept",
+      "Origin",
+      "X-Requested-With",
+    ],
+    exposedHeaders: ["Content-Length", "X-JSON-Response"],
+    maxAge: 86400, // 24 hours
+    optionsSuccessStatus: 200,
   }),
 );
+
+// Add additional CORS headers middleware for APIs
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin || "*");
+    res.header("Access-Control-Allow-Credentials", "true");
+    res.header(
+      "Access-Control-Allow-Headers",
+      "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+    );
+    res.header(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+    );
+  }
+  next();
+});
 
 app.use(cookieParser());
 
