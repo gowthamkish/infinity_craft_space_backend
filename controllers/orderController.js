@@ -31,7 +31,7 @@ const updateOrderStatus = async (req, res) => {
     const { orderId } = req.params;
     const { status } = req.body;
 
-    const validStatuses = ["pending", "confirmed", "processing", "cancelled", "shipped", "delivered"];
+    const validStatuses = ["pending", "confirmed", "processing", "cancelled", "shipped", "out_for_delivery", "delivered"];
     if (!status || !validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -46,9 +46,12 @@ const updateOrderStatus = async (req, res) => {
 
     const oldStatus = order.status;
 
+    const statusUpdate = { status, updatedAt: new Date() };
+    if (status === "delivered") statusUpdate.deliveredAt = new Date();
+
     const result = await Order.updateOne(
       { _id: orderId },
-      { $set: { status, updatedAt: new Date() } },
+      { $set: statusUpdate },
     );
 
     if (!result.acknowledged) {

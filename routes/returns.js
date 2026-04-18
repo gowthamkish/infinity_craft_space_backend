@@ -112,7 +112,7 @@ router.post(
       "duplicate_order",
       "other",
     ]),
-    body("items").isArray({ min: 1 }),
+    // items arrives as JSON string when sent via FormData
     body("returnType").isIn(["return", "exchange", "refund"]),
   ],
   async (req, res) => {
@@ -120,6 +120,15 @@ router.post(
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         return res.status(400).json({ success: false, errors: errors.array() });
+      }
+
+      // Parse items — may arrive as a JSON string from FormData
+      let parsedItems = req.body.items;
+      if (typeof parsedItems === "string") {
+        try { parsedItems = JSON.parse(parsedItems); } catch { parsedItems = []; }
+      }
+      if (!Array.isArray(parsedItems) || parsedItems.length === 0) {
+        return res.status(400).json({ success: false, error: "At least one item is required" });
       }
 
       // Verify order belongs to user
@@ -138,14 +147,23 @@ router.post(
         });
       }
 
-      // Check if order is eligible for return (within 30 days)
-      const daysOld = Math.floor(
-        (Date.now() - order.createdAt) / (1000 * 60 * 60 * 24),
-      );
-      if (daysOld > 30) {
+      // Only delivered orders are eligible for return
+      if (order.status !== "delivered") {
         return res.status(400).json({
           success: false,
-          error: "Return window expired (30 days)",
+          error: "Only delivered orders can be returned",
+        });
+      }
+
+      // Check 3-day return window from delivery date
+      const deliveredAt = order.deliveredAt || order.updatedAt;
+      const daysSinceDelivery = Math.floor(
+        (Date.now() - new Date(deliveredAt)) / (1000 * 60 * 60 * 24),
+      );
+      if (daysSinceDelivery > 3) {
+        return res.status(400).json({
+          success: false,
+          error: "Return window expired (3 days after delivery)",
         });
       }
 
@@ -162,7 +180,7 @@ router.post(
         orderId: req.body.orderId,
         userId: req.user._id,
         userEmail: req.user.email,
-        items: req.body.items,
+        items: parsedItems,
         returnType: req.body.returnType,
         reason: req.body.reason,
         reasonDetails: req.body.reasonDetails,

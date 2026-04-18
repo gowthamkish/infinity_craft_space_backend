@@ -5,19 +5,34 @@ const crypto = require("crypto");
 const Order = require("../models/Order");
 const Cart = require("../models/Cart");
 const Product = require("../models/Product");
+const User = require("../models/User");
 const Notification = require("../models/Notification");
 const { protect } = require("../middlewares/authMiddleware");
+const shiprocket = require("../services/shiprocketService");
 
-// Initialize Razorpay instance
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+// Lazily initialize Razorpay so credential changes take effect on restart
+function getRazorpay() {
+  const key_id = process.env.RAZORPAY_KEY_ID;
+  const key_secret = process.env.RAZORPAY_KEY_SECRET;
+  if (!key_id || !key_secret) {
+    throw new Error(
+      "RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET is missing from environment",
+    );
+  }
+  return new Razorpay({ key_id, key_secret });
+}
 
 // Create Razorpay order
 router.post("/", protect, async (req, res) => {
   try {
-    const { amount, currency, shippingAddress, items } = req.body;
+    const {
+      amount,
+      currency,
+      shippingAddress,
+      items,
+      shippingCost = 0,
+      shippingCourierId = null,
+    } = req.body;
 
     // Check if user exists
     if (!req.user || !req.user._id) {
@@ -176,42 +191,91 @@ router.post("/", protect, async (req, res) => {
       }
     }
 
-    // Default shipping address if not provided (match new schema)
-    const defaultShippingAddress = shippingAddress || {
-      street: "Address not provided",
-      city: "City not provided",
-      state: "State not provided",
-      country: "India",
-      zipCode: "000000",
-    };
-
     // Calculate subtotal from order items
     const calculatedSubtotal = orderItems.reduce((sum, item) => {
       return sum + (item.totalPrice || 0);
     }, 0);
 
-    // Create order in database
+    // Ensure shippingAddress has all required fields with proper defaults
+    const finalShippingAddress = shippingAddress
+      ? {
+          street:
+            (shippingAddress.street || "").trim() || "Address not provided",
+          city: (shippingAddress.city || "").trim() || "City not provided",
+          state: (shippingAddress.state || "").trim() || "State not provided",
+          country:
+            (shippingAddress.country || "India")
+              .replace(/\s*\(.*?\)\s*/g, "")
+              .trim() || "India",
+          zipCode: (shippingAddress.zipCode || "000000").trim(),
+          phone: (shippingAddress.phone || "").trim(),
+        }
+      : {
+          street: "Address not provided",
+          city: "City not provided",
+          state: "State not provided",
+          country: "India",
+          zipCode: "000000",
+          phone: "",
+        };
+
+    // Calculate final totalAmount (ensure it's not 0)
+    const finalTotalAmount =
+      totalAmount || calculatedSubtotal + (shippingCost || 0);
+
+    console.log("[Payment] Creating order with:", {
+      subtotal: calculatedSubtotal,
+      shipping: shippingCost,
+      totalAmount: finalTotalAmount,
+      shippingAddress: finalShippingAddress,
+    });
+
+    // Call Razorpay FIRST — don't save DB order until Razorpay succeeds
+    let razorpayOrder;
+    try {
+      razorpayOrder = await getRazorpay().orders.create({
+        amount: amount,
+        currency: currency || "INR",
+        receipt: `rcpt_${Date.now()}`,
+        payment_capture: 1,
+      });
+    } catch (rzpErr) {
+      const rzpMsg =
+        rzpErr?.error?.description ||
+        rzpErr?.message ||
+        "Razorpay authentication failed";
+      console.error(
+        "[Payment] Razorpay error:",
+        rzpErr?.error || rzpErr?.message,
+      );
+      console.error(
+        "[Payment] KEY_ID loaded:",
+        process.env.RAZORPAY_KEY_ID
+          ? `${process.env.RAZORPAY_KEY_ID.slice(0, 8)}...`
+          : "MISSING",
+      );
+      return res.status(502).json({
+        message: "Payment gateway error. Please try again.",
+        detail: rzpMsg,
+      });
+    }
+
+    // Razorpay succeeded — now persist the order
     const order = new Order({
       userId,
       items: orderItems,
       subtotal: calculatedSubtotal,
-      totalAmount,
+      shipping: shippingCost || 0,
+      discount: { couponCode: null, amount: 0 },
+      totalAmount: finalTotalAmount,
       currency: currency || "INR",
-      shippingAddress: shippingAddress || defaultShippingAddress,
+      shippingAddress: finalShippingAddress,
       status: "pending",
+      paymentMethod: "prepaid",
+      shippingCourierId: shippingCourierId || null,
+      razorpayOrderId: razorpayOrder.id,
     });
 
-    await order.save();
-
-    const razorpayOrder = await razorpay.orders.create({
-      amount: amount, // Amount is already in paise from frontend
-      currency: currency || "INR",
-      receipt: `order_${order._id}`,
-      payment_capture: 1,
-    });
-
-    // Update order with Razorpay order ID
-    order.razorpayOrderId = razorpayOrder.id;
     await order.save();
 
     res.json({
@@ -219,8 +283,8 @@ router.post("/", protect, async (req, res) => {
       order: {
         id: order._id,
         razorpayOrderId: razorpayOrder.id,
-        amount: amount / 100, // Amount in rupees for display
-        amountInPaise: amount, // Amount in paise for Razorpay
+        amount: amount / 100,
+        amountInPaise: amount,
         currency: currency || "INR",
       },
       razorpayKeyId: process.env.RAZORPAY_KEY_ID,
@@ -270,6 +334,13 @@ router.post("/verify-payment", protect, async (req, res) => {
       order.razorpayPaymentId = razorpayPaymentId;
       order.razorpaySignature = razorpaySignature;
       order.updatedAt = new Date();
+      order.timeline.push({
+        status: "confirmed",
+        title: "Payment Confirmed",
+        description: `Payment of ₹${order.totalAmount} received via Razorpay`,
+        timestamp: new Date(),
+        metadata: { razorpayPaymentId },
+      });
       await order.save();
 
       // Deduct stock for purchased items
@@ -315,7 +386,72 @@ router.post("/verify-payment", protect, async (req, res) => {
         await Cart.findOneAndDelete({ userId: req.user._id });
       } catch (cartError) {
         console.warn("Warning: Could not clear cart -", cartError.message);
-        // Don't fail the payment verification if cart clearing fails
+      }
+
+      // ── Create Shiprocket shipment (non-blocking — payment is already confirmed) ──
+      try {
+        const srEmail = process.env.SHIPROCKET_EMAIL || "";
+        const srPass = process.env.SHIPROCKET_PASSWORD || "";
+        const credentialsConfigured =
+          srEmail &&
+          !srEmail.includes("example.com") &&
+          srPass &&
+          srPass !== "your_shiprocket_password";
+
+        if (
+          credentialsConfigured &&
+          order.shippingAddress?.zipCode !== "000000"
+        ) {
+          const user = await User.findById(order.userId);
+          const courierId =
+            order.shippingCourierId || req.body?.shippingCourierId || null;
+          console.log(
+            "[Payment] Creating Shiprocket order with courierId:",
+            courierId,
+          );
+          const srData = await shiprocket.createShiprocketOrder(
+            order,
+            user,
+            courierId,
+          );
+
+          await Order.findByIdAndUpdate(order._id, {
+            $set: {
+              shiprocket: srData,
+              trackingNumber: srData.awbCode,
+              status: "processing",
+            },
+            $push: {
+              timeline: {
+                status: "processing",
+                title: "Shipment Created",
+                description: `AWB ${srData.awbCode} assigned via ${srData.courierName}`,
+                timestamp: new Date(),
+                metadata: {
+                  awbCode: srData.awbCode,
+                  courierName: srData.courierName,
+                },
+              },
+            },
+          });
+
+          // Re-fetch the updated order to send complete data to frontend
+          const updatedOrder = await Order.findById(order._id);
+          return res.json({
+            success: true,
+            message: "Payment verified successfully",
+            order: updatedOrder,
+          });
+        }
+      } catch (srErr) {
+        // Shiprocket failure MUST NOT fail the payment flow
+        console.error("[Shiprocket] Order creation failed:", srErr.message);
+        await Notification.create({
+          type: "system",
+          message: `⚠️ Shiprocket failed for order ${order._id}: ${srErr.message}`,
+          orderId: order._id,
+          read: false,
+        }).catch(() => {});
       }
 
       res.json({
@@ -437,7 +573,7 @@ router.post("/create-simple-order", protect, async (req, res) => {
     }
 
     // Create Razorpay order directly (no database record)
-    const razorpayOrder = await razorpay.orders.create({
+    const razorpayOrder = await getRazorpay().orders.create({
       amount: amount, // Amount in paise
       currency: currency,
       receipt: `simple_${req.user._id}_${Date.now()}`,
@@ -479,7 +615,7 @@ router.post("/create-direct-order", protect, async (req, res) => {
     const totalAmount = amount / 100; // Convert paise to rupees
 
     // Create Razorpay order directly
-    const razorpayOrder = await razorpay.orders.create({
+    const razorpayOrder = await getRazorpay().orders.create({
       amount: amount, // Amount in paise
       currency: currency,
       receipt: `direct_order_${Date.now()}`,

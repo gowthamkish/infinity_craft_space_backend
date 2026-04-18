@@ -36,6 +36,51 @@ router.post("/update-stock", protect, updateStock);
 router.get("/:id/recommendations", getRecommendations);
 router.get("/:id/bought-together", getBoughtTogetherProducts);
 
+// Restock a product (admin only)
+router.patch("/:id/restock", protect, isAdmin, async (req, res) => {
+  try {
+    const { quantity, note } = req.body;
+    const qty = parseInt(quantity, 10);
+    if (!qty || qty <= 0) {
+      return res.status(400).json({ success: false, error: "Quantity must be a positive integer" });
+    }
+
+    const product = await require("../models/Product").findById(req.params.id);
+    if (!product) {
+      return res.status(404).json({ success: false, error: "Product not found" });
+    }
+
+    const previousStock = product.stock;
+    const newStock = previousStock + qty;
+
+    const updated = await require("../models/Product").findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: {
+          stock: newStock,
+          updatedAt: new Date(),
+          lastEditedAt: new Date(),
+          "lastEditedBy.userId": req.user._id,
+          "lastEditedBy.name":   req.user.username || req.user.name || "Admin",
+          "lastEditedBy.email":  req.user.email,
+        },
+      },
+      { new: true },
+    );
+
+    console.log(`[Restock] ${updated.name}: ${previousStock} → ${newStock} (+${qty}) by ${req.user.email}${note ? ` — Note: ${note}` : ""}`);
+
+    res.json({
+      success: true,
+      product: updated,
+      restock: { previousStock, addedQuantity: qty, newStock, note: note || null },
+    });
+  } catch (err) {
+    console.error("Restock error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Add product with multiple images (base64) - Admin only
 router.post("/", protect, isAdmin, productValidation, async (req, res) => {
   try {

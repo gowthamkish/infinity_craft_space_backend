@@ -71,6 +71,7 @@ const OrderSchema = new mongoose.Schema(
         "processing",
         "cancelled",
         "shipped",
+        "out_for_delivery",
         "delivered",
         "returned",
       ],
@@ -96,8 +97,27 @@ const OrderSchema = new mongoose.Schema(
       zipCode: { type: String, required: true },
       phone: { type: String, default: "" },
     },
+    shippingCourierId: { type: String, default: null }, // Selected courier ID from Shiprocket rates
     trackingNumber: String,
     estimatedDelivery: Date,
+    paymentMethod: {
+      type: String,
+      enum: ["prepaid", "cod"],
+      default: "prepaid",
+    },
+
+    // Shiprocket integration
+    shiprocket: {
+      shiprocketOrderId: { type: String },
+      shipmentId: { type: String },
+      awbCode: { type: String },
+      courierId: { type: String },
+      courierName: { type: String },
+      trackingUrl: { type: String },
+      currentStatus: { type: String },
+      returnOrderId: { type: String },
+      lastSyncAt: { type: Date },
+    },
 
     // Order timeline
     timeline: [TimelineEventSchema],
@@ -119,6 +139,8 @@ const OrderSchema = new mongoose.Schema(
       deliveryConfirmation: { type: Boolean, default: false },
     },
 
+    deliveredAt: { type: Date, default: null },
+
     notes: String,
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
@@ -130,5 +152,7 @@ const OrderSchema = new mongoose.Schema(
 OrderSchema.index({ userId: 1, createdAt: -1 });
 OrderSchema.index({ status: 1, createdAt: -1 });
 OrderSchema.index({ razorpayOrderId: 1 });
+OrderSchema.index({ "shiprocket.awbCode": 1 });
+OrderSchema.index({ "shiprocket.shipmentId": 1 });
 
 module.exports = mongoose.model("Order", OrderSchema);
