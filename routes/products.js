@@ -184,6 +184,10 @@ router.post("/", protect, isAdmin, productValidation, async (req, res) => {
         req.body.estimatedDelivery !== undefined
           ? parseInt(req.body.estimatedDelivery)
           : 5,
+      weightInGrams:
+        req.body.weightInGrams !== undefined
+          ? parseInt(req.body.weightInGrams)
+          : 500,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -426,6 +430,8 @@ router.put("/:id", protect, isAdmin, async (req, res) => {
       updateData.trackInventory = req.body.trackInventory;
     if (req.body.estimatedDelivery !== undefined)
       updateData.estimatedDelivery = parseInt(req.body.estimatedDelivery);
+    if (req.body.weightInGrams !== undefined)
+      updateData.weightInGrams = parseInt(req.body.weightInGrams);
 
     // Handle multiple images update
     if (images && Array.isArray(images) && images.length > 0) {

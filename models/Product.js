@@ -63,6 +63,10 @@ const ProductSchema = new mongoose.Schema({
   trackInventory: { type: Boolean, default: true },
   estimatedDelivery: { type: Number, default: 5 }, // days
 
+  // Shipping weight — stored in grams for precision
+  // Admin sets this per product; used to calculate roadways shipping charge at checkout
+  weightInGrams: { type: Number, default: 500, min: 1 },
+
   // Images
   images: [
     {
