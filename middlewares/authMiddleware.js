@@ -2,8 +2,8 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 
 // JWT token expiry settings
-const ACCESS_TOKEN_EXPIRY = "15m"; // 15 minutes (was 7d — too long)
-const REFRESH_TOKEN_EXPIRY = "7d"; // 7 days (was 30d — too long)
+const ACCESS_TOKEN_EXPIRY = "2h"; // 2 hours — 15m was too short for mobile (refresh cycle caused logout)
+const REFRESH_TOKEN_EXPIRY = "30d"; // 30 days — keep users logged in on mobile
 
 // Generate access token
 const generateAccessToken = (userId) => {
@@ -90,8 +90,9 @@ const protect = async (req, res, next) => {
 const isProduction = process.env.NODE_ENV === "production";
 const cookieOptions = (maxAgeMs) => ({
   httpOnly: true,
-  secure: isProduction,
-  sameSite: isProduction ? "none" : "lax",
+  secure: isProduction,       // must be true for SameSite=None
+  sameSite: isProduction ? "none" : "lax", // "none" required for cross-origin on mobile
+  path: "/",                  // explicit root path so cookie is sent on all routes
   maxAge: maxAgeMs,
 });
 
@@ -103,8 +104,8 @@ const clearAuthCookies = (res) => {
 
 // Set auth cookies
 const setAuthCookies = (res, tokens) => {
-  res.cookie("token", tokens.accessToken, cookieOptions(15 * 60 * 1000)); // 15 min
-  res.cookie("refreshToken", tokens.refreshToken, cookieOptions(7 * 24 * 60 * 60 * 1000)); // 7 days
+  res.cookie("token", tokens.accessToken, cookieOptions(2 * 60 * 60 * 1000)); // 2 hours
+  res.cookie("refreshToken", tokens.refreshToken, cookieOptions(30 * 24 * 60 * 60 * 1000)); // 30 days
 };
 
 // Middleware to refresh access token using refresh token
