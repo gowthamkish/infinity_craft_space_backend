@@ -188,6 +188,9 @@ router.post("/", protect, isAdmin, productValidation, async (req, res) => {
         req.body.weightInGrams !== undefined
           ? parseInt(req.body.weightInGrams)
           : 500,
+      isCustomizable: req.body.isCustomizable === true || req.body.isCustomizable === "true",
+      processingDaysMin: req.body.processingDaysMin !== undefined ? parseInt(req.body.processingDaysMin) : 10,
+      processingDaysMax: req.body.processingDaysMax !== undefined ? parseInt(req.body.processingDaysMax) : 12,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -432,6 +435,12 @@ router.put("/:id", protect, isAdmin, async (req, res) => {
       updateData.estimatedDelivery = parseInt(req.body.estimatedDelivery);
     if (req.body.weightInGrams !== undefined)
       updateData.weightInGrams = parseInt(req.body.weightInGrams);
+    if (req.body.isCustomizable !== undefined)
+      updateData.isCustomizable = req.body.isCustomizable === true || req.body.isCustomizable === "true";
+    if (req.body.processingDaysMin !== undefined)
+      updateData.processingDaysMin = parseInt(req.body.processingDaysMin);
+    if (req.body.processingDaysMax !== undefined)
+      updateData.processingDaysMax = parseInt(req.body.processingDaysMax);
 
     // Handle multiple images update
     if (images && Array.isArray(images) && images.length > 0) {

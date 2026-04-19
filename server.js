@@ -126,6 +126,8 @@ app.use("/api/qna", require("./routes/qna"));
 app.use("/api/returns", require("./routes/returns"));
 // Shiprocket shipping integration (webhook is public, rest is protected inside the router)
 app.use("/api/shipping", require("./routes/shipping"));
+// Pincode-based delivery estimation (public)
+app.use("/api/delivery", require("./routes/delivery"));
 
 // Error handling middleware for payload too large
 app.use((error, req, res, next) => {

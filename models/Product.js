@@ -61,7 +61,12 @@ const ProductSchema = new mongoose.Schema({
   stock: { type: Number, default: 0, min: 0 },
   lowStockThreshold: { type: Number, default: 5, min: 0 },
   trackInventory: { type: Boolean, default: true },
-  estimatedDelivery: { type: Number, default: 5 }, // days
+  estimatedDelivery: { type: Number, default: 5 }, // days (fallback when no pincode given)
+
+  // Customizable / made-to-order product settings
+  isCustomizable: { type: Boolean, default: false },
+  processingDaysMin: { type: Number, default: 10, min: 0 }, // business days before dispatch
+  processingDaysMax: { type: Number, default: 12, min: 0 },
 
   // Shipping weight — stored in grams for precision
   // Admin sets this per product; used to calculate roadways shipping charge at checkout
