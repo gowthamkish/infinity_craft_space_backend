@@ -58,6 +58,7 @@ app.use(
       "Accept",
       "Origin",
       "X-Requested-With",
+      "X-CSRF-Token",
     ],
     exposedHeaders: ["Content-Length", "X-JSON-Response"],
     maxAge: 86400, // 24 hours
@@ -128,6 +129,8 @@ app.use("/api/returns", require("./routes/returns"));
 app.use("/api/shipping", require("./routes/shipping"));
 // Pincode-based delivery estimation (public)
 app.use("/api/delivery", require("./routes/delivery"));
+// Server-Sent Events — real-time order status push
+app.use("/api/sse", require("./routes/sse"));
 
 // Error handling middleware for payload too large
 app.use((error, req, res, next) => {

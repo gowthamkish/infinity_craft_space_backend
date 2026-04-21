@@ -221,6 +221,32 @@ exports.sendReturnApproved = async (user, returnRequest) => {
   return exports.sendEmail(user.email, template);
 };
 
+exports.sendStockAlertEmail = async (email, product) => {
+  const frontendUrl = process.env.FRONTEND_URL || "https://www.infinitycraftspace.com";
+  const template = {
+    subject: `Back in Stock: ${product.name}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px;">
+        <h2>Good news! It's back in stock 🎉</h2>
+        <p>A product you were watching is available again:</p>
+        <div style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <p><strong>${product.name}</strong></p>
+          ${product.price ? `<p>Price: ₹${product.price}</p>` : ""}
+        </div>
+        <p style="margin: 20px 0;">
+          <a href="${frontendUrl}/product/${product._id}" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
+            Shop Now
+          </a>
+        </p>
+        <p style="color: #666; font-size: 12px;">
+          Stock is limited — grab yours before it sells out again!
+        </p>
+      </div>
+    `,
+  };
+  return exports.sendEmail(email, template);
+};
+
 // Batch send emails (admin notifications)
 exports.sendAdminNotification = async (subject, html) => {
   try {

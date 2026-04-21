@@ -70,6 +70,33 @@ router.patch("/:id/restock", protect, isAdmin, async (req, res) => {
 
     console.log(`[Restock] ${updated.name}: ${previousStock} → ${newStock} (+${qty}) by ${req.user.email}${note ? ` — Note: ${note}` : ""}`);
 
+    // If product was out of stock and now has stock, fire stock alerts (non-blocking)
+    if (previousStock <= 0 && newStock > 0) {
+      setImmediate(async () => {
+        try {
+          const StockAlert = require("../models/StockAlert");
+          const { enqueueEmail } = require("../utils/emailQueue");
+          const { sendStockAlertEmail } = require("../utils/emailService");
+
+          const alerts = await StockAlert.find({
+            productId: req.params.id,
+            notifiedAt: null,
+          }).lean();
+
+          for (const alert of alerts) {
+            enqueueEmail(() => sendStockAlertEmail(alert.email, updated));
+            await StockAlert.findByIdAndUpdate(alert._id, { notifiedAt: new Date() });
+          }
+
+          if (alerts.length > 0) {
+            console.log(`[Restock] Sent back-in-stock alerts to ${alerts.length} subscriber(s) for ${updated.name}`);
+          }
+        } catch (alertErr) {
+          console.error("[Restock] Stock alert notification failed:", alertErr.message);
+        }
+      });
+    }
+
     res.json({
       success: true,
       product: updated,
@@ -580,6 +607,60 @@ router.put("/:id", protect, isAdmin, async (req, res) => {
       success: false,
       error: err.message,
     });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stock Alert ("Notify Me") endpoints
+// POST /api/products/:id/notify  — subscribe to back-in-stock alert
+// DELETE /api/products/:id/notify — unsubscribe
+// ─────────────────────────────────────────────────────────────────────────────
+const StockAlert = require("../models/StockAlert");
+
+router.post("/:id/notify", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ success: false, error: "Valid email is required" });
+    }
+
+    const product = await Product.findById(req.params.id).lean();
+    if (!product) {
+      return res.status(404).json({ success: false, error: "Product not found" });
+    }
+
+    if (product.trackInventory !== false && product.stock > 0) {
+      return res.status(400).json({ success: false, error: "Product is already in stock" });
+    }
+
+    await StockAlert.findOneAndUpdate(
+      { productId: req.params.id, email: email.toLowerCase() },
+      {
+        productId: req.params.id,
+        email: email.toLowerCase(),
+        userId: req.user?._id || null,
+        notifiedAt: null,
+      },
+      { upsert: true, new: true },
+    );
+
+    res.json({ success: true, message: "You'll be notified when this product is back in stock." });
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.json({ success: true, message: "You're already subscribed for this product." });
+    }
+    console.error("Stock alert error:", err);
+    res.status(500).json({ success: false, error: "Failed to register alert" });
+  }
+});
+
+router.delete("/:id/notify", async (req, res) => {
+  try {
+    const { email } = req.body;
+    await StockAlert.deleteOne({ productId: req.params.id, email: (email || "").toLowerCase() });
+    res.json({ success: true, message: "Notification cancelled." });
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Failed to cancel alert" });
   }
 });
 

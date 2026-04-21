@@ -37,6 +37,9 @@ const register = async (req, res) => {
   }
 };
 
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCK_TIME_MS = 15 * 60 * 1000; // 15 minutes
+
 const login = async (req, res) => {
   try {
     const user = await User.findOne({ email: req.body.email });
@@ -45,9 +48,38 @@ const login = async (req, res) => {
       return res.status(400).json({ error: "Invalid email or password" });
     }
 
+    // Check account lock
+    if (user.lockUntil && user.lockUntil > Date.now()) {
+      const remainingMs = user.lockUntil - Date.now();
+      const remainingMins = Math.ceil(remainingMs / 60000);
+      return res.status(423).json({
+        error: `Account temporarily locked. Try again in ${remainingMins} minute${remainingMins !== 1 ? "s" : ""}.`,
+      });
+    }
+
     const match = await bcrypt.compare(req.body.password, user.password);
     if (!match) {
-      return res.status(400).json({ error: "Invalid email or password" });
+      // Increment failed attempts
+      user.loginAttempts = (user.loginAttempts || 0) + 1;
+      if (user.loginAttempts >= MAX_LOGIN_ATTEMPTS) {
+        user.lockUntil = new Date(Date.now() + LOCK_TIME_MS);
+        await user.save();
+        return res.status(423).json({
+          error: "Too many failed attempts. Account locked for 15 minutes.",
+        });
+      }
+      await user.save();
+      const remaining = MAX_LOGIN_ATTEMPTS - user.loginAttempts;
+      return res.status(400).json({
+        error: `Invalid email or password. ${remaining} attempt${remaining !== 1 ? "s" : ""} remaining.`,
+      });
+    }
+
+    // Successful login — reset lockout
+    if (user.loginAttempts > 0 || user.lockUntil) {
+      user.loginAttempts = 0;
+      user.lockUntil = null;
+      await user.save();
     }
 
     const tokens = generateTokens(user._id);

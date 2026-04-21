@@ -2,14 +2,22 @@ const User = require("../models/User");
 const Product = require("../models/Product");
 const Order = require("../models/Order");
 const Notification = require("../models/Notification");
+const { cache } = require("../utils/cache");
 
 const getDashboard = async (req, res) => {
   try {
-    const userCount = await User.countDocuments();
-    const productCount = await Product.countDocuments();
-    const orderCount = await Order.countDocuments();
+    const cached = await cache.get("dashboard:counts");
+    if (cached) return res.json(cached);
 
-    res.json({ userCount, productCount, orderCount });
+    const [userCount, productCount, orderCount] = await Promise.all([
+      User.countDocuments(),
+      Product.countDocuments(),
+      Order.countDocuments(),
+    ]);
+
+    const result = { userCount, productCount, orderCount };
+    await cache.set("dashboard:counts", result, 120); // 2 min cache
+    res.json(result);
   } catch (error) {
     console.error("Dashboard counts error:", error);
     res.status(500).json({
@@ -105,11 +113,18 @@ const markNotificationRead = async (req, res) => {
 
 const getAllOrders = async (req, res) => {
   try {
+    // Short TTL so admin sees near-real-time data
+    const cached = await cache.get("admin:all_orders");
+    if (cached) return res.json(cached);
+
     const orders = await Order.find({})
       .populate("userId", "username email isAdmin")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
-    res.json({ success: true, count: orders.length, orders });
+    const result = { success: true, count: orders.length, orders };
+    await cache.set("admin:all_orders", result, 30); // 30s cache
+    res.json(result);
   } catch (error) {
     console.error("Error fetching all orders:", error);
     res.status(500).json({
@@ -124,6 +139,10 @@ const getAnalytics = async (req, res) => {
   try {
     const { period = "30" } = req.query;
     const daysAgo = parseInt(period);
+
+    const cacheKey = `admin:analytics:${daysAgo}`;
+    const cached = await cache.get(cacheKey);
+    if (cached) return res.json(cached);
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - daysAgo);
     startDate.setHours(0, 0, 0, 0);
@@ -266,7 +285,7 @@ const getAnalytics = async (req, res) => {
       ? (((currentRevenue - prevRevenue) / prevRevenue) * 100).toFixed(1)
       : 0;
 
-    res.json({
+    const analyticsResult = {
       success: true,
       period: daysAgo,
       summary: {
@@ -308,7 +327,10 @@ const getAnalytics = async (req, res) => {
         date: order.createdAt,
         itemCount: order.items?.length || 0,
       })),
-    });
+    };
+
+    await cache.set(cacheKey, analyticsResult, 300); // 5 min cache
+    res.json(analyticsResult);
   } catch (error) {
     console.error("Analytics API error:", error);
     res.status(500).json({

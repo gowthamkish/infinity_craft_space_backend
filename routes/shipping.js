@@ -288,11 +288,28 @@ router.post("/return/:orderId", protect, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.post("/webhook", async (req, res) => {
   try {
-    // Optional token verification (configure in Shiprocket dashboard)
+    // Security: verify webhook origin via HMAC signature or static token
+    const webhookSecret = process.env.SHIPROCKET_WEBHOOK_SECRET;
     const webhookToken = process.env.SHIPROCKET_WEBHOOK_TOKEN;
-    if (webhookToken) {
-      const receivedToken =
-        req.headers["x-shiprocket-token"] || req.query.token;
+
+    if (webhookSecret) {
+      // Preferred: HMAC-SHA256 signature verification
+      const signature = req.headers["x-shiprocket-signature"] || req.headers["x-sr-signature"];
+      if (signature) {
+        const crypto = require("crypto");
+        const body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+        const expectedSig = crypto
+          .createHmac("sha256", webhookSecret)
+          .update(body)
+          .digest("hex");
+        if (signature !== expectedSig) {
+          console.warn("[Shiprocket Webhook] HMAC signature mismatch");
+          return res.status(401).json({ error: "Unauthorized" });
+        }
+      }
+    } else if (webhookToken) {
+      // Fallback: static token comparison
+      const receivedToken = req.headers["x-shiprocket-token"] || req.query.token;
       if (receivedToken !== webhookToken) {
         console.warn("[Shiprocket Webhook] Invalid token received");
         return res.status(401).json({ error: "Unauthorized" });

@@ -18,7 +18,13 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   isAdmin: { type: Boolean, default: false },
   addresses: { type: [AddressSchema], default: [] },
-  wishlist: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }]
+  wishlist: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
+  // Account lockout fields
+  loginAttempts: { type: Number, default: 0 },
+  lockUntil: { type: Date, default: null },
 });
+
+// Index for fast lockout lookups
+userSchema.index({ email: 1 });
 
 module.exports = mongoose.model("User", userSchema);

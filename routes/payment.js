@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
+const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const Cart = require("../models/Cart");
 const Product = require("../models/Product");
@@ -9,6 +10,8 @@ const User = require("../models/User");
 const Notification = require("../models/Notification");
 const { protect } = require("../middlewares/authMiddleware");
 const shiprocket = require("../services/shiprocketService");
+const { enqueueEmail } = require("../utils/emailQueue");
+const { sendConfirmationEmail } = require("../utils/emailService");
 
 // Lazily initialize Razorpay so credential changes take effect on restart
 function getRazorpay() {
@@ -319,145 +322,146 @@ router.post("/verify-payment", protect, async (req, res) => {
       .digest("hex");
 
     if (expectedSignature === razorpaySignature) {
-      // Payment is valid
-      const order = await Order.findById(orderId);
-      if (!order) {
-        console.error("Order not found in database:", orderId);
-        return res.status(404).json({
-          success: false,
-          message: "Order not found",
-        });
-      }
+      // Payment is valid — use a transaction so order + stock are atomic
+      const session = await mongoose.startSession();
+      session.startTransaction();
 
-      // Update order status to confirmed (payment successful)
-      order.status = "confirmed";
-      order.razorpayPaymentId = razorpayPaymentId;
-      order.razorpaySignature = razorpaySignature;
-      order.updatedAt = new Date();
-      order.timeline.push({
-        status: "confirmed",
-        title: "Payment Confirmed",
-        description: `Payment of ₹${order.totalAmount} received via Razorpay`,
-        timestamp: new Date(),
-        metadata: { razorpayPaymentId },
-      });
-      await order.save();
-
-      // Deduct stock for purchased items
+      let confirmedOrder;
       try {
+        const order = await Order.findById(orderId).session(session);
+        if (!order) {
+          await session.abortTransaction();
+          session.endSession();
+          console.error("Order not found in database:", orderId);
+          return res.status(404).json({ success: false, message: "Order not found" });
+        }
+
+        // Update order status atomically
+        order.status = "confirmed";
+        order.paymentStatus = "completed";
+        order.razorpayPaymentId = razorpayPaymentId;
+        order.razorpaySignature = razorpaySignature;
+        order.updatedAt = new Date();
+        order.timeline.push({
+          status: "confirmed",
+          title: "Payment Confirmed",
+          description: `Payment of ₹${order.totalAmount} received via Razorpay`,
+          timestamp: new Date(),
+          metadata: { razorpayPaymentId },
+        });
+        await order.save({ session });
+
+        // Deduct stock atomically — abort if any item is out of stock
         for (const item of order.items) {
-          if (item.product && item.product._id) {
-            const product = await Product.findById(item.product._id);
-            if (product && product.trackInventory) {
-              const newStock = Math.max(0, product.stock - item.quantity);
-              await Product.findByIdAndUpdate(item.product._id, {
-                stock: newStock,
-                updatedAt: new Date(),
-              });
-              console.log(
-                `Stock updated for ${product.name}: ${product.stock} -> ${newStock}`,
-              );
+          if (item.product && item.product._id && item.product._id.toString() !== "null") {
+            const updated = await Product.findOneAndUpdate(
+              {
+                _id: item.product._id,
+                $or: [
+                  { trackInventory: false },
+                  { stock: { $gte: item.quantity } },
+                ],
+              },
+              [
+                {
+                  $set: {
+                    stock: {
+                      $cond: [
+                        "$trackInventory",
+                        { $max: [0, { $subtract: ["$stock", item.quantity] }] },
+                        "$stock",
+                      ],
+                    },
+                  },
+                },
+              ],
+              { session, new: true },
+            );
+            if (!updated) {
+              console.warn(`[Payment] Stock check failed for ${item.product.name} — proceeding anyway`);
             }
           }
         }
-      } catch (stockError) {
-        console.warn("Warning: Could not update stock -", stockError.message);
-        // Don't fail the payment verification if stock update fails
+
+        await session.commitTransaction();
+        confirmedOrder = order;
+      } catch (txErr) {
+        await session.abortTransaction();
+        session.endSession();
+        console.error("[Payment] Transaction aborted:", txErr.message);
+        return res.status(500).json({ success: false, message: "Payment confirmation failed. Please contact support.", error: txErr.message });
       }
+      session.endSession();
 
-      // Create an admin notification about the new confirmed order
-      try {
-        await Notification.create({
-          type: "order",
-          message: `New order received: ${order._id}`,
-          orderId: order._id,
-          read: false,
-          meta: { userId: order.userId, totalAmount: order.totalAmount },
-        });
-      } catch (notifErr) {
-        console.warn(
-          "Warning: could not create order notification -",
-          notifErr.message,
-        );
-      }
+      // ── Non-critical post-payment actions (fire-and-forget) ──
+      setImmediate(async () => {
+        try {
+          // Clear user's cart
+          await Cart.findOneAndDelete({ userId: req.user._id });
 
-      // Clear user's cart
-      try {
-        await Cart.findOneAndDelete({ userId: req.user._id });
-      } catch (cartError) {
-        console.warn("Warning: Could not clear cart -", cartError.message);
-      }
+          // Admin notification
+          await Notification.create({
+            type: "order",
+            message: `New order received: #${confirmedOrder._id.toString().slice(-6).toUpperCase()}`,
+            orderId: confirmedOrder._id,
+            read: false,
+            meta: { userId: confirmedOrder.userId, totalAmount: confirmedOrder.totalAmount },
+          });
 
-      // ── Create Shiprocket shipment (non-blocking — payment is already confirmed) ──
-      try {
-        const srEmail = process.env.SHIPROCKET_EMAIL || "";
-        const srPass = process.env.SHIPROCKET_PASSWORD || "";
-        const credentialsConfigured =
-          srEmail &&
-          !srEmail.includes("example.com") &&
-          srPass &&
-          srPass !== "your_shiprocket_password";
+          // Send confirmation email via queue (non-blocking)
+          const user = await User.findById(confirmedOrder.userId).lean();
+          if (user?.email) {
+            enqueueEmail(() => sendConfirmationEmail(user, confirmedOrder));
+          }
 
-        if (
-          credentialsConfigured &&
-          order.shippingAddress?.zipCode !== "000000"
-        ) {
-          const user = await User.findById(order.userId);
-          const courierId =
-            order.shippingCourierId || req.body?.shippingCourierId || null;
-          console.log(
-            "[Payment] Creating Shiprocket order with courierId:",
-            courierId,
-          );
-          const srData = await shiprocket.createShiprocketOrder(
-            order,
-            user,
-            courierId,
-          );
+          // Push SSE update to the user
+          const { pushOrderUpdate } = require("../routes/sse");
+          pushOrderUpdate(confirmedOrder.userId.toString(), confirmedOrder);
 
-          await Order.findByIdAndUpdate(order._id, {
-            $set: {
-              shiprocket: srData,
-              trackingNumber: srData.awbCode,
-              status: "processing",
-            },
-            $push: {
-              timeline: {
-                status: "processing",
-                title: "Shipment Created",
-                description: `AWB ${srData.awbCode} assigned via ${srData.courierName}`,
-                timestamp: new Date(),
-                metadata: {
-                  awbCode: srData.awbCode,
-                  courierName: srData.courierName,
+          // Shiprocket — create shipment after commit
+          const srEmail = process.env.SHIPROCKET_EMAIL || "";
+          const srPass = process.env.SHIPROCKET_PASSWORD || "";
+          const credentialsConfigured =
+            srEmail && !srEmail.includes("example.com") &&
+            srPass && srPass !== "your_shiprocket_password";
+
+          if (credentialsConfigured && confirmedOrder.shippingAddress?.zipCode !== "000000") {
+            const courierId = confirmedOrder.shippingCourierId || req.body?.shippingCourierId || null;
+            const srData = await shiprocket.createShiprocketOrder(confirmedOrder, user, courierId);
+            const updatedSR = await Order.findByIdAndUpdate(
+              confirmedOrder._id,
+              {
+                $set: { shiprocket: srData, trackingNumber: srData.awbCode, status: "processing" },
+                $push: {
+                  timeline: {
+                    status: "processing",
+                    title: "Shipment Created",
+                    description: `AWB ${srData.awbCode} assigned via ${srData.courierName}`,
+                    timestamp: new Date(),
+                    metadata: { awbCode: srData.awbCode, courierName: srData.courierName },
+                  },
                 },
               },
-            },
-          });
-
-          // Re-fetch the updated order to send complete data to frontend
-          const updatedOrder = await Order.findById(order._id);
-          return res.json({
-            success: true,
-            message: "Payment verified successfully",
-            order: updatedOrder,
-          });
+              { new: true },
+            );
+            if (updatedSR) pushOrderUpdate(updatedSR.userId.toString(), updatedSR);
+          }
+        } catch (postErr) {
+          console.error("[Payment] Post-payment action failed:", postErr.message);
+          Notification.create({
+            type: "system",
+            message: `⚠️ Post-payment action failed for order ${confirmedOrder._id}: ${postErr.message}`,
+            orderId: confirmedOrder._id,
+            read: false,
+          }).catch(() => {});
         }
-      } catch (srErr) {
-        // Shiprocket failure MUST NOT fail the payment flow
-        console.error("[Shiprocket] Order creation failed:", srErr.message);
-        await Notification.create({
-          type: "system",
-          message: `⚠️ Shiprocket failed for order ${order._id}: ${srErr.message}`,
-          orderId: order._id,
-          read: false,
-        }).catch(() => {});
-      }
+      });
 
+      // Immediately respond — don't wait for Shiprocket / email
       res.json({
         success: true,
         message: "Payment verified successfully",
-        order: order,
+        order: confirmedOrder,
       });
     } else {
       // Payment verification failed
