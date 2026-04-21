@@ -1,5 +1,8 @@
 const router = require("express").Router();
-const { protect, refreshAccessToken } = require("../middlewares/authMiddleware");
+const {
+  protect,
+  refreshAccessToken,
+} = require("../middlewares/authMiddleware");
 const {
   registerValidation,
   loginValidation,

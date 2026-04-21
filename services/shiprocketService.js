@@ -1,10 +1,10 @@
 /**
  * Shiprocket Service — DISABLED (will be re-enabled in future)
- * 
+ *
  * This service has been disabled and is not in use.
  * The complete implementation is preserved in version control history
  * and can be re-enabled when Shiprocket integration resumes.
- * 
+ *
  * For now, all Shiprocket functions throw errors indicating the integration is disabled.
  */
 

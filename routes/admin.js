@@ -19,7 +19,12 @@ router.get("/dashboard", protect, isAdmin, getDashboard);
 router.get("/users", protect, isAdmin, getUsers);
 router.put("/users/:id/role", protect, isAdmin, updateUserRole);
 router.get("/notifications", protect, isAdmin, getNotifications);
-router.get("/notifications/unread-count", protect, isAdmin, getUnreadNotificationCount);
+router.get(
+  "/notifications/unread-count",
+  protect,
+  isAdmin,
+  getUnreadNotificationCount,
+);
 router.put("/notifications/:id/read", protect, isAdmin, markNotificationRead);
 router.get("/orders", protect, isAdmin, getAllOrders);
 router.get("/analytics", protect, isAdmin, getAnalytics);

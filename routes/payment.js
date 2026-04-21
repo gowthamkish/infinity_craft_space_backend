@@ -333,7 +333,9 @@ router.post("/verify-payment", protect, async (req, res) => {
           await session.abortTransaction();
           session.endSession();
           console.error("Order not found in database:", orderId);
-          return res.status(404).json({ success: false, message: "Order not found" });
+          return res
+            .status(404)
+            .json({ success: false, message: "Order not found" });
         }
 
         // Update order status atomically
@@ -353,7 +355,11 @@ router.post("/verify-payment", protect, async (req, res) => {
 
         // Deduct stock atomically — abort if any item is out of stock
         for (const item of order.items) {
-          if (item.product && item.product._id && item.product._id.toString() !== "null") {
+          if (
+            item.product &&
+            item.product._id &&
+            item.product._id.toString() !== "null"
+          ) {
             const updated = await Product.findOneAndUpdate(
               {
                 _id: item.product._id,
@@ -378,7 +384,9 @@ router.post("/verify-payment", protect, async (req, res) => {
               { session, new: true },
             );
             if (!updated) {
-              console.warn(`[Payment] Stock check failed for ${item.product.name} — proceeding anyway`);
+              console.warn(
+                `[Payment] Stock check failed for ${item.product.name} — proceeding anyway`,
+              );
             }
           }
         }
@@ -389,7 +397,13 @@ router.post("/verify-payment", protect, async (req, res) => {
         await session.abortTransaction();
         session.endSession();
         console.error("[Payment] Transaction aborted:", txErr.message);
-        return res.status(500).json({ success: false, message: "Payment confirmation failed. Please contact support.", error: txErr.message });
+        return res
+          .status(500)
+          .json({
+            success: false,
+            message: "Payment confirmation failed. Please contact support.",
+            error: txErr.message,
+          });
       }
       session.endSession();
 
@@ -405,7 +419,10 @@ router.post("/verify-payment", protect, async (req, res) => {
             message: `New order received: #${confirmedOrder._id.toString().slice(-6).toUpperCase()}`,
             orderId: confirmedOrder._id,
             read: false,
-            meta: { userId: confirmedOrder.userId, totalAmount: confirmedOrder.totalAmount },
+            meta: {
+              userId: confirmedOrder.userId,
+              totalAmount: confirmedOrder.totalAmount,
+            },
           });
 
           // Send confirmation email via queue (non-blocking)
@@ -449,7 +466,10 @@ router.post("/verify-payment", protect, async (req, res) => {
           }
           */
         } catch (postErr) {
-          console.error("[Payment] Post-payment action failed:", postErr.message);
+          console.error(
+            "[Payment] Post-payment action failed:",
+            postErr.message,
+          );
           Notification.create({
             type: "system",
             message: `⚠️ Post-payment action failed for order ${confirmedOrder._id}: ${postErr.message}`,
