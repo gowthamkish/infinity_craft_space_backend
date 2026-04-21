@@ -1,5 +1,6 @@
 const Order = require("../models/Order");
 const Product = require("../models/Product");
+const Notification = require("../models/Notification");
 
 const createOrder = async (req, res) => {
   const { items } = req.body;
@@ -13,7 +14,8 @@ const getUserOrders = async (req, res) => {
   try {
     const orders = await Order.find({ userId: req.user._id })
       .populate("userId", "username email isAdmin")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
     res.json({ success: true, count: orders.length, orders });
   } catch (error) {
@@ -80,7 +82,35 @@ const updateOrderStatus = async (req, res) => {
 
     const updatedOrder = await Order.findById(orderId).populate("userId", "username email");
 
-    res.json({
+    // Create admin notification when order status is updated
+    // Notify admins about important status changes
+    const notificationMessages = {
+      pending: "Order awaiting confirmation",
+      confirmed: "Order has been confirmed",
+      processing: "Order is being processed for shipment",
+      shipped: "Order has been shipped",
+      out_for_delivery: "Order is out for delivery",
+      delivered: "Order has been delivered",
+      cancelled: "Order has been cancelled",
+    };
+
+    const notificationMessage = notificationMessages[status] || `Order status updated to ${status}`;
+    await Notification.create({
+      type: "order_status_update",
+      message: `Order #${order._id.toString().slice(-6).toUpperCase()} — ${notificationMessage}`,
+      orderId: order._id,
+      read: false,
+      meta: {
+        orderId: order._id,
+        userId: order.userId,
+        previousStatus: oldStatus,
+        newStatus: status,
+        totalAmount: order.totalAmount,
+        customerEmail: updatedOrder?.userId?.email,
+      },
+    }).catch((err) => {
+      console.error("Failed to create order status notification:", err.message);
+    });
       success: true,
       message: `Order status updated to ${status}`,
       order: updatedOrder,

@@ -10,8 +10,49 @@ const {
 
 const getAllProducts = async (req, res) => {
   try {
-    const products = await Product.find();
-    res.json({ success: true, count: products.length, products });
+    const {
+      page = 1,
+      limit = 24,
+      sort = "-createdAt",
+      category,
+      subCategory,
+      minPrice,
+      maxPrice,
+      search,
+      inStock,
+    } = req.query;
+
+    const filter = {};
+    if (category) filter.category = category;
+    if (subCategory) filter.subCategory = subCategory;
+    if (minPrice || maxPrice) {
+      filter.price = {};
+      if (minPrice) filter.price.$gte = +minPrice;
+      if (maxPrice) filter.price.$lte = +maxPrice;
+    }
+    if (inStock === "true") filter.$or = [{ trackInventory: false }, { stock: { $gt: 0 } }];
+    if (search) filter.$text = { $search: search };
+
+    const pageNum = Math.max(1, parseInt(page, 10));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
+
+    const [products, total] = await Promise.all([
+      Product.find(filter)
+        .sort(sort)
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum)
+        .lean(),
+      Product.countDocuments(filter),
+    ]);
+
+    res.json({
+      success: true,
+      count: products.length,
+      total,
+      page: pageNum,
+      pages: Math.ceil(total / limitNum),
+      products,
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

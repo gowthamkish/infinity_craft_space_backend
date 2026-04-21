@@ -9,7 +9,7 @@ const Product = require("../models/Product");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
 const { protect } = require("../middlewares/authMiddleware");
-const shiprocket = require("../services/shiprocketService");
+// const shiprocket = require("../services/shiprocketService"); // COMMENTED OUT — Shiprocket will be re-enabled in future
 const { enqueueEmail } = require("../utils/emailQueue");
 const { sendConfirmationEmail } = require("../utils/emailService");
 
@@ -418,6 +418,7 @@ router.post("/verify-payment", protect, async (req, res) => {
           const { pushOrderUpdate } = require("../routes/sse");
           pushOrderUpdate(confirmedOrder.userId.toString(), confirmedOrder);
 
+          /* COMMENTED OUT — Shiprocket integration disabled (will be re-enabled in future)
           // Shiprocket — create shipment after commit
           const srEmail = process.env.SHIPROCKET_EMAIL || "";
           const srPass = process.env.SHIPROCKET_PASSWORD || "";
@@ -446,6 +447,7 @@ router.post("/verify-payment", protect, async (req, res) => {
             );
             if (updatedSR) pushOrderUpdate(updatedSR.userId.toString(), updatedSR);
           }
+          */
         } catch (postErr) {
           console.error("[Payment] Post-payment action failed:", postErr.message);
           Notification.create({

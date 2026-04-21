@@ -2,6 +2,8 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+const mongoSanitize = require("express-mongo-sanitize");
+const cron = require("node-cron");
 require("dotenv").config();
 const authRoutes = require("./routes/auth");
 const productRoutes = require("./routes/products");
@@ -42,11 +44,11 @@ app.use(
 
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
+      } else if (process.env.NODE_ENV === "production") {
+        console.warn(`CORS blocked: ${origin}`);
+        callback(new Error(`CORS: Origin ${origin} not allowed`));
       } else {
-        console.warn(
-          `CORS Error: Origin ${origin} not in allowed list. Allowed: ${allowedOrigins.join(", ")}`,
-        );
-        // Still allow but log for debugging
+        console.warn(`CORS dev-allow: ${origin}`);
         callback(null, true);
       }
     },
@@ -88,6 +90,15 @@ app.use(cookieParser());
 
 // Apply global rate limiting
 app.use("/api/", apiLimiter);
+
+// Recursively strip $ and . keys (NoSQL injection defence).
+// Express 5 makes req.query read-only, so we call sanitize() manually on
+// writable fields only instead of using the middleware form.
+app.use((req, _res, next) => {
+  if (req.body)   req.body   = mongoSanitize.sanitize(req.body,   { replaceWith: "_" });
+  if (req.params) req.params = mongoSanitize.sanitize(req.params, { replaceWith: "_" });
+  next();
+});
 
 // Apply input sanitization to all routes
 app.use(sanitizeInput);
@@ -156,6 +167,21 @@ app.use((error, req, res, next) => {
         ? error.message
         : "Something went wrong",
   });
+});
+
+// ── Health check ──────────────────────────────────────────────────────────────
+app.get("/health", (_req, res) =>
+  res.json({
+    status: "ok",
+    uptime: process.uptime(),
+    mongo: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    timestamp: new Date().toISOString(),
+  }),
+);
+
+// ── Abandoned cart cron — daily at 10:00 AM ──────────────────────────────────
+cron.schedule("0 10 * * *", () => {
+  require("./jobs/abandonedCartJob")();
 });
 
 const PORT = process.env.PORT || 5000;

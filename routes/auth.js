@@ -1,5 +1,5 @@
 const router = require("express").Router();
-const { protect, isAdmin, refreshAccessToken } = require("../middlewares/authMiddleware");
+const { protect, refreshAccessToken } = require("../middlewares/authMiddleware");
 const {
   registerValidation,
   loginValidation,
@@ -21,7 +21,6 @@ const {
   addToWishlist,
   removeFromWishlist,
 } = require("../controllers/authController");
-const User = require("../models/User");
 
 // Token refresh
 router.post("/refresh-token", refreshAccessToken);
@@ -46,10 +45,5 @@ router.get("/wishlist", protect, getWishlist);
 router.post("/wishlist", protect, addToWishlist);
 router.delete("/wishlist/:productId", protect, removeFromWishlist);
 
-// Admin-only route
-router.get("/admin/users", protect, isAdmin, async (req, res) => {
-  const users = await User.find({});
-  res.json(users);
-});
-
-module.exports = router;
+// NOTE: Admin routes are now in /api/admin routes for better organization
+// See /routes/admin.js for admin user management
