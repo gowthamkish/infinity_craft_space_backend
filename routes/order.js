@@ -11,3 +11,5 @@ router.post("/", createOrder);
 router.get("/", getUserOrders);
 // updateOrderStatus should only be accessible to admins
 router.put("/:orderId/status", protect, isAdmin, updateOrderStatus);
+
+module.exports = router;

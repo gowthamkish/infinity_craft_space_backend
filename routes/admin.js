@@ -29,3 +29,5 @@ router.put("/notifications/:id/read", protect, isAdmin, markNotificationRead);
 router.get("/orders", protect, isAdmin, getAllOrders);
 router.get("/analytics", protect, isAdmin, getAnalytics);
 router.get("/predictions", protect, isAdmin, getPredictions);
+
+module.exports = router;

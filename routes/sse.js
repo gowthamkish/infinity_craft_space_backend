@@ -20,12 +20,13 @@ const sseClients = new Map();
  * Push an order update to a specific user's open SSE connection.
  * Called from payment.js and shipping webhook after status changes.
  */
-function pushOrderUpdate(userId, order) {
+function pushOrderUpdate(userId, order, previousStatus) {
   const client = sseClients.get(String(userId));
   if (!client) return;
   try {
-    const payload = JSON.stringify({ type: "ORDER_UPDATE", order });
-    client.write(`data: ${payload}\n\n`);
+    // Named event so the frontend can use addEventListener("ORDER_UPDATE")
+    const payload = JSON.stringify({ order, previousStatus: previousStatus || null });
+    client.write(`event: ORDER_UPDATE\ndata: ${payload}\n\n`);
   } catch (err) {
     console.warn("[SSE] Failed to push to client:", err.message);
     sseClients.delete(String(userId));

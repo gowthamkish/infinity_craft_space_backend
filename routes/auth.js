@@ -50,3 +50,5 @@ router.delete("/wishlist/:productId", protect, removeFromWishlist);
 
 // NOTE: Admin routes are now in /api/admin routes for better organization
 // See /routes/admin.js for admin user management
+
+module.exports = router;

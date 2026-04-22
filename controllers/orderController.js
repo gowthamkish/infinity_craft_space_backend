@@ -111,6 +111,14 @@ const updateOrderStatus = async (req, res) => {
     }).catch((err) => {
       console.error("Failed to create order status notification:", err.message);
     });
+
+    // Push real-time SSE update to the customer
+    try {
+      const { pushOrderUpdate } = require("../routes/sse");
+      pushOrderUpdate(order.userId.toString(), updatedOrder, oldStatus);
+    } catch {}
+
+    res.json({
       success: true,
       message: `Order status updated to ${status}`,
       order: updatedOrder,
