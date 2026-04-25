@@ -42,6 +42,7 @@ const LOCK_TIME_MS = 15 * 60 * 1000; // 15 minutes
 
 const login = async (req, res) => {
   try {
+    const plainPassword = req.body.password;
     const user = await User.findOne({ email: req.body.email });
 
     if (!user) {
@@ -57,7 +58,7 @@ const login = async (req, res) => {
       });
     }
 
-    const match = await bcrypt.compare(req.body.password, user.password);
+    const match = await bcrypt.compare(plainPassword, user.password);
     if (!match) {
       // Increment failed attempts
       user.loginAttempts = (user.loginAttempts || 0) + 1;
