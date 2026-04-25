@@ -142,6 +142,8 @@ app.use("/api/shipping", require("./routes/shipping"));
 app.use("/api/delivery", require("./routes/delivery"));
 // Server-Sent Events — real-time order status push
 app.use("/api/sse", require("./routes/sse"));
+// WhatsApp notifications (admin APIs: logs, test, resend)
+app.use("/api/whatsapp", require("./routes/whatsapp"));
 
 // Error handling middleware for payload too large
 app.use((error, req, res, next) => {

@@ -1,6 +1,8 @@
 const Order = require("../models/Order");
 const Product = require("../models/Product");
 const Notification = require("../models/Notification");
+const User = require("../models/User");
+const { notifyCustomerStatusChange } = require("../services/whatsappService");
 
 const createOrder = async (req, res) => {
   const { items } = req.body;
@@ -117,6 +119,16 @@ const updateOrderStatus = async (req, res) => {
       const { pushOrderUpdate } = require("../routes/sse");
       pushOrderUpdate(order.userId.toString(), updatedOrder, oldStatus);
     } catch {}
+
+    // WhatsApp notification to customer
+    setImmediate(async () => {
+      try {
+        const customer = await User.findById(order.userId).lean();
+        await notifyCustomerStatusChange(updatedOrder, customer, status);
+      } catch (e) {
+        console.error("[WhatsApp] Customer status notification error:", e.message);
+      }
+    });
 
     res.json({
       success: true,

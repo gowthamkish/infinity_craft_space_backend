@@ -12,6 +12,7 @@ const { protect } = require("../middlewares/authMiddleware");
 // const shiprocket = require("../services/shiprocketService"); // COMMENTED OUT — Shiprocket will be re-enabled in future
 const { enqueueEmail } = require("../utils/emailQueue");
 const { sendConfirmationEmail } = require("../utils/emailService");
+const { notifyAdminNewOrder } = require("../services/whatsappService");
 
 // Lazily initialize Razorpay so credential changes take effect on restart
 function getRazorpay() {
@@ -430,6 +431,11 @@ router.post("/verify-payment", protect, async (req, res) => {
           if (user?.email) {
             enqueueEmail(() => sendConfirmationEmail(user, confirmedOrder));
           }
+
+          // WhatsApp alert to admin
+          notifyAdminNewOrder(confirmedOrder, user).catch((e) =>
+            console.error("[WhatsApp] Admin notification error:", e.message),
+          );
 
           // Push SSE update to the user
           const { pushOrderUpdate } = require("../routes/sse");
