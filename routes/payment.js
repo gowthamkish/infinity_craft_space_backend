@@ -3,6 +3,7 @@ const router = express.Router();
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
 const mongoose = require("mongoose");
+const { strictLimiter } = require("../middlewares/rateLimiter");
 const Order = require("../models/Order");
 const Cart = require("../models/Cart");
 const Product = require("../models/Product");
@@ -301,8 +302,8 @@ router.post("/", protect, async (req, res) => {
   }
 });
 
-// Verify payment
-router.post("/verify-payment", protect, async (req, res) => {
+// Verify payment — extra rate limit: max 10 attempts per minute per IP
+router.post("/verify-payment", protect, strictLimiter, async (req, res) => {
   try {
     const { razorpayOrderId, razorpayPaymentId, razorpaySignature, orderId } =
       req.body;
@@ -528,6 +529,9 @@ router.post("/verify-payment", protect, async (req, res) => {
 // Get order details
 router.get("/order/:orderId", protect, async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.orderId)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
     const order = await Order.findById(req.params.orderId)
       .populate("items.productId")
       .populate("userId", "name email");

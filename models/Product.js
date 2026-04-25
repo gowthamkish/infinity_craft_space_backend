@@ -52,6 +52,9 @@ const BulkDiscountSchema = new mongoose.Schema(
 
 const ProductSchema = new mongoose.Schema({
   name: { type: String, required: true },
+  // SEO-friendly slug: auto-generated from name if not provided
+  // e.g. "Handmade Resin Coaster Set" → "handmade-resin-coaster-set"
+  slug: { type: String, trim: true },
   price: { type: Number, required: true },
   description: { type: String },
   category: { type: String, required: true },
@@ -144,5 +147,27 @@ ProductSchema.index({ stock: 1, trackInventory: 1 });
 ProductSchema.index({ averageRating: -1, ratingCount: -1 });
 ProductSchema.index({ price: 1 });
 ProductSchema.index({ isCustomizable: 1 });
+// Compound index covering the most common catalog query: active products in a category sorted by price
+ProductSchema.index({ isActive: 1, category: 1, price: 1 });
+// Low-stock alert queries
+ProductSchema.index({ trackInventory: 1, stock: 1, lowStockThreshold: 1 });
+// Slug lookups (added with slug field)
+ProductSchema.index({ slug: 1 }, { unique: true, sparse: true });
+
+// Auto-generate slug from name before saving
+ProductSchema.pre("save", async function (next) {
+  if (this.isModified("name") && !this.slug) {
+    const base = this.name
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .slice(0, 80);
+    // Append last 5 chars of ObjectId for uniqueness without ugly random strings
+    const suffix = this._id.toString().slice(-5);
+    this.slug = `${base}-${suffix}`;
+  }
+  next();
+});
 
 module.exports = mongoose.model("Product", ProductSchema);

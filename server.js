@@ -1,6 +1,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const helmet = require("helmet");
 const cookieParser = require("cookie-parser");
 const mongoSanitize = require("express-mongo-sanitize");
 const cron = require("node-cron");
@@ -33,6 +34,14 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
     ];
 
 console.log("CORS Allowed Origins:", allowedOrigins);
+
+// Security headers — CSP, X-Frame-Options, X-Content-Type-Options, etc.
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" }, // allow Cloudinary images
+    contentSecurityPolicy: false, // managed separately if needed; avoid breaking CDN assets
+  }),
+);
 
 app.use(
   cors({
@@ -144,6 +153,8 @@ app.use("/api/delivery", require("./routes/delivery"));
 app.use("/api/sse", require("./routes/sse"));
 // WhatsApp notifications (admin APIs: logs, test, resend)
 app.use("/api/whatsapp", require("./routes/whatsapp"));
+// Dynamic sitemap (no auth required — for search engine crawlers)
+app.use("/", require("./routes/sitemap"));
 
 // Error handling middleware for payload too large
 app.use((error, req, res, next) => {
@@ -184,6 +195,17 @@ app.get("/health", (_req, res) =>
 // ── Abandoned cart cron — daily at 10:00 AM ──────────────────────────────────
 cron.schedule("0 10 * * *", () => {
   require("./jobs/abandonedCartJob")();
+});
+
+// ── WhatsApp retry cron — every 10 minutes, sweep failed/pending logs ─────────
+cron.schedule("*/10 * * * *", async () => {
+  try {
+    const { retryFailedNotifications } = require("./services/whatsappService");
+    const count = await retryFailedNotifications();
+    if (count > 0) console.log(`[WhatsApp Cron] Retried ${count} failed notification(s)`);
+  } catch (err) {
+    console.error("[WhatsApp Cron] Error:", err.message);
+  }
 });
 
 const PORT = process.env.PORT || 5000;

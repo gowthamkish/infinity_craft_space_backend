@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
 const Notification = require("../models/Notification");
@@ -34,6 +35,10 @@ const updateOrderStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
     const { status } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
 
     const validStatuses = ["pending", "confirmed", "processing", "cancelled", "shipped", "out_for_delivery", "delivered"];
     if (!status || !validStatuses.includes(status)) {

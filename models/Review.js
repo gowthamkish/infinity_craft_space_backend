@@ -79,6 +79,8 @@ const ReviewSchema = new mongoose.Schema({
 // Index for efficient queries
 ReviewSchema.index({ product: 1, createdAt: -1 });
 ReviewSchema.index({ user: 1, product: 1 }, { unique: true }); // One review per user per product
+ReviewSchema.index({ product: 1, status: 1, createdAt: -1 }); // Approved reviews per product
+ReviewSchema.index({ status: 1, createdAt: -1 }); // Admin moderation queue
 
 // Static method to calculate average rating for a product
 ReviewSchema.statics.calculateAverageRating = async function (productId) {

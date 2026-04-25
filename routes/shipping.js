@@ -8,10 +8,19 @@
 
 const express = require("express");
 const router = express.Router();
+const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
 const Notification = require("../models/Notification");
 const { protect } = require("../middlewares/authMiddleware");
+
+const validateObjectId = (res, id) => {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400).json({ success: false, error: "Invalid order ID" });
+    return false;
+  }
+  return true;
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/shipping/rates — disabled until Shiprocket is integrated
@@ -33,6 +42,7 @@ router.get("/pickup-locations", protect, (_req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get("/track/:orderId", protect, async (req, res) => {
   try {
+    if (!validateObjectId(res, req.params.orderId)) return;
     const order = await Order.findById(req.params.orderId).lean();
     if (!order) return res.status(404).json({ success: false, error: "Order not found" });
     if (order.userId.toString() !== req.user._id.toString()) {
@@ -66,6 +76,7 @@ router.get("/track/:orderId", protect, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.post("/cancel/:orderId", protect, async (req, res) => {
   try {
+    if (!validateObjectId(res, req.params.orderId)) return;
     const order = await Order.findById(req.params.orderId);
     if (!order) return res.status(404).json({ success: false, error: "Order not found" });
     if (order.userId.toString() !== req.user._id.toString()) {
