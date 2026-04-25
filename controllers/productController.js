@@ -22,7 +22,7 @@ const getAllProducts = async (req, res) => {
       inStock,
     } = req.query;
 
-    const filter = {};
+    const filter = { isActive: { $ne: false } };
     if (category) filter.category = category;
     if (subCategory) filter.subCategory = subCategory;
     if (minPrice || maxPrice) {
@@ -93,8 +93,8 @@ const deleteProduct = async (req, res) => {
       }
     }
 
-    await Product.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: "Product and associated images deleted successfully" });
+    await Product.findByIdAndUpdate(req.params.id, { isActive: false });
+    res.json({ success: true, message: "Product deactivated successfully" });
   } catch (err) {
     console.error("Product deletion error:", err);
     res.status(500).json({ success: false, error: err.message });

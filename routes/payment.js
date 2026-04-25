@@ -316,6 +316,15 @@ router.post("/verify-payment", protect, strictLimiter, async (req, res) => {
       });
     }
 
+    // Idempotency: if this paymentId was already verified, return the existing confirmed order
+    const alreadyConfirmed = await Order.findOne({
+      razorpayPaymentId: razorpayPaymentId,
+      paymentStatus: "completed",
+    });
+    if (alreadyConfirmed) {
+      return res.json({ success: true, message: "Payment already verified", order: alreadyConfirmed });
+    }
+
     // Generate signature for verification
     const body = razorpayOrderId + "|" + razorpayPaymentId;
     const expectedSignature = crypto

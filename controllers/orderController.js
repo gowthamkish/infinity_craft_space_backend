@@ -15,12 +15,26 @@ const createOrder = async (req, res) => {
 
 const getUserOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ userId: req.user._id })
-      .populate("userId", "username email isAdmin")
-      .sort({ createdAt: -1 })
-      .lean();
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
 
-    res.json({ success: true, count: orders.length, orders });
+    const [orders, total] = await Promise.all([
+      Order.find({ userId: req.user._id })
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Order.countDocuments({ userId: req.user._id }),
+    ]);
+
+    res.json({
+      success: true,
+      count: orders.length,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+      orders,
+    });
   } catch (error) {
     console.error("Error fetching orders:", error);
     res.status(500).json({
@@ -28,6 +42,25 @@ const getUserOrders = async (req, res) => {
       message: "Failed to fetch orders",
       error: error.message,
     });
+  }
+};
+
+const getOrderById = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+
+    const order = await Order.findOne({ _id: orderId, userId: req.user._id }).lean();
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    res.json({ success: true, order });
+  } catch (error) {
+    console.error("Error fetching order:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch order", error: error.message });
   }
 };
 
@@ -150,4 +183,4 @@ const updateOrderStatus = async (req, res) => {
   }
 };
 
-module.exports = { createOrder, getUserOrders, updateOrderStatus };
+module.exports = { createOrder, getUserOrders, getOrderById, updateOrderStatus };

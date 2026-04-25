@@ -14,6 +14,7 @@ const { protect, isAdmin } = require("./middlewares/authMiddleware");
 const { apiLimiter, strictLimiter } = require("./middlewares/rateLimiter");
 const { sanitizeInput } = require("./middlewares/validators");
 
+const crypto = require("crypto");
 const app = express();
 
 // Trust proxy for rate limiting behind reverse proxy (Render, Heroku, etc.)
@@ -111,6 +112,37 @@ app.use((req, _res, next) => {
 
 // Apply input sanitization to all routes
 app.use(sanitizeInput);
+
+// ── CSRF protection ────────────────────────────────────────────────────────────
+// Double-submit cookie pattern: server issues a random token in a readable cookie;
+// client must echo it back in X-CSRF-Token header on every state-changing request.
+app.get("/api/auth/csrf-token", (req, res) => {
+  const token = crypto.randomBytes(32).toString("hex");
+  const isProd = process.env.NODE_ENV === "production";
+  res.cookie("_csrf", token, {
+    httpOnly: false,   // Must be readable by JS so the client can send it as a header
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+  });
+  res.json({ csrfToken: token });
+});
+
+function csrfProtect(req, res, next) {
+  // Only enforce on state-changing methods
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+  // Skip CSRF check for Razorpay webhook (uses signature-based auth) and SSE
+  const skipPaths = ["/api/payment/webhook", "/api/shipping/webhook", "/api/sse/stream"];
+  if (skipPaths.some((p) => req.path.startsWith(p))) return next();
+
+  const cookieToken = req.cookies._csrf;
+  const headerToken = req.headers["x-csrf-token"];
+  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+    return res.status(403).json({ success: false, error: "Invalid CSRF token" });
+  }
+  next();
+}
+app.use(csrfProtect);
 
 // Increase payload size limits for multiple image uploads
 app.use(

@@ -48,9 +48,12 @@ router.get("/:userId", async (req, res) => {
 });
 
 // Sync entire cart from frontend (replace cart contents)
+// Accepts optional clientUpdatedAt timestamp for last-write-wins conflict resolution.
+// If the server cart is newer than what the client last saw, we reject the write
+// so a stale second tab can't overwrite changes made in a newer tab.
 router.post("/sync", async (req, res) => {
   try {
-    const { userId, items } = req.body;
+    const { userId, items, clientUpdatedAt } = req.body;
 
     if (!userId) {
       return res.status(400).json({
@@ -59,7 +62,6 @@ router.post("/sync", async (req, res) => {
       });
     }
 
-    // Transform frontend format to database format
     const cartItems = items.map((item) => ({
       productId: item.product._id,
       quantity: item.quantity,
@@ -70,11 +72,20 @@ router.post("/sync", async (req, res) => {
     if (!cart) {
       cart = new Cart({ userId, items: cartItems });
     } else {
+      // Last-write-wins: reject if server cart was updated AFTER the client's snapshot
+      if (clientUpdatedAt && cart.updatedAt > new Date(clientUpdatedAt)) {
+        return res.status(409).json({
+          success: false,
+          conflict: true,
+          message: "Cart was updated from another session",
+          serverUpdatedAt: cart.updatedAt,
+        });
+      }
       cart.items = cartItems;
     }
 
     await cart.save();
-    res.json({ success: true, message: "Cart synced successfully" });
+    res.json({ success: true, message: "Cart synced successfully", updatedAt: cart.updatedAt });
   } catch (error) {
     console.error("Cart sync error:", error);
     res.status(500).json({

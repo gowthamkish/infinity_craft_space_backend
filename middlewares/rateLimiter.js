@@ -25,10 +25,9 @@ const authLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: true, // Don't count successful logins
 });
 
-// Login rate limiter - 10 attempts per 15 minutes
+// Login rate limiter - 10 attempts per 15 minutes, counts all attempts (no skip on success)
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10,
@@ -39,6 +38,7 @@ const loginLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  skipSuccessfulRequests: false, // Count ALL attempts — prevents burst attacks via successful logins
 });
 
 // Registration rate limiter - 3 registrations per hour

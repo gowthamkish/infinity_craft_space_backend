@@ -67,6 +67,7 @@ const ProductSchema = new mongoose.Schema({
   estimatedDelivery: { type: Number, default: 5 }, // days (fallback when no pincode given)
 
   // Customizable / made-to-order product settings
+  isActive: { type: Boolean, default: true, index: true },
   isCustomizable: { type: Boolean, default: false },
   processingDaysMin: { type: Number, default: 10, min: 0 }, // business days before dispatch
   processingDaysMax: { type: Number, default: 12, min: 0 },
