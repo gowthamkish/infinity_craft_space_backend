@@ -7,6 +7,7 @@ const mongoSanitize = require("express-mongo-sanitize");
 const cron = require("node-cron");
 require("dotenv").config();
 const authRoutes = require("./routes/auth");
+const passwordResetRoutes = require("./routes/passwordReset");
 const productRoutes = require("./routes/products");
 const adminRoutes = require("./routes/admin");
 const categoryRoutes = require("./routes/categories");
@@ -141,6 +142,10 @@ function csrfProtect(req, res, next) {
     "/api/sse/stream",
     "/api/auth/login",
     "/api/auth/register",
+    // Password-reset flow: unauthenticated calls before session exists
+    "/api/auth/forgot-password",
+    "/api/auth/verify-answers",
+    "/api/auth/reset-password",
   ];
   if (skipPaths.some((p) => req.path.startsWith(p))) return next();
 
@@ -176,6 +181,7 @@ mongoose
   .catch((err) => console.error(err));
 
 app.use("/api/auth", authRoutes);
+app.use("/api/auth", passwordResetRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/admin", protect, isAdmin, adminRoutes);
 app.use("/api/categories", categoryRoutes);

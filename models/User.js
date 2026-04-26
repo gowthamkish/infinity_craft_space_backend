@@ -28,7 +28,6 @@ const userSchema = new mongoose.Schema({
   permissions: {
     type: [String],
     default: [],
-    // e.g. ["manage_orders", "manage_products", "manage_users"]
   },
 
   addresses: { type: [AddressSchema], default: [] },
@@ -49,22 +48,49 @@ const userSchema = new mongoose.Schema({
   // Referral programme
   referralCode: { type: String, unique: true, sparse: true },
   referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
-  referralCredits: { type: Number, default: 0 }, // store credit in ₹
+  referralCredits: { type: Number, default: 0 },
+
+  // ── Security questions ────────────────────────────────────────────────────
+  // answerHash = bcrypt(normalised_answer, 12). select:false keeps hashes off API responses.
+  hasSecurityQuestions: { type: Boolean, default: false }, // fast check without loading the array
+  securityQuestions: {
+    type: [{
+      questionIndex: { type: Number, required: true },
+      answerHash: { type: String, required: true },
+    }],
+    default: [],
+    select: false, // contains bcrypt hashes — never expose
+  },
+
+  // ── Password reset tokens ─────────────────────────────────────────────────
+  // These store SHA-256 hashes of random tokens (hashes are not secret).
+  // They are excluded from API responses via the protect middleware's projection,
+  // NOT via select:false (which causes Mongoose save/query quirks with partial projections).
+  verificationToken: { type: String },
+  verificationTokenExpiry: { type: Date },
+  verificationAttempts: { type: Number, default: 0 },
+
+  resetToken: { type: String },
+  resetTokenExpiry: { type: Date },
+
+  // ── Session invalidation ───────────────────────────────────────────────────
+  // JWTs issued before this timestamp are rejected by the protect middleware.
+  passwordChangedAt: { type: Date },
+
+  // ── Previous password hash (reuse prevention) ─────────────────────────────
+  previousPasswordHash: { type: String, select: false },
 });
 
-// Auto-generate referral code on first save
 userSchema.pre("save", function (next) {
   if (!this.referralCode) {
     this.referralCode = crypto.randomBytes(4).toString("hex").toUpperCase();
   }
-  // Keep isAdmin in sync with role for backward-compat
   if (this.isModified("role")) {
     this.isAdmin = this.role === "admin" || this.role === "superadmin";
   }
   if (this.isModified("isAdmin") && !this.isModified("role")) {
     this.role = this.isAdmin ? "admin" : "customer";
   }
-  // Auto-upgrade loyalty tier
   if (this.isModified("loyaltyPoints")) {
     if (this.loyaltyPoints >= 5000) this.loyaltyTier = "gold";
     else if (this.loyaltyPoints >= 2000) this.loyaltyTier = "silver";
@@ -74,5 +100,8 @@ userSchema.pre("save", function (next) {
 });
 
 userSchema.index({ role: 1 });
+// Sparse indexes for O(1) token lookups
+userSchema.index({ verificationToken: 1 }, { sparse: true });
+userSchema.index({ resetToken: 1 }, { sparse: true });
 
 module.exports = mongoose.model("User", userSchema);

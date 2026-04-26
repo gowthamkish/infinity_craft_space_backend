@@ -53,10 +53,27 @@ const protect = async (req, res, next) => {
         return res.status(401).json({ message: "Invalid token type" });
       }
 
-      req.user = await User.findById(decoded.id).select("-password");
+      // Exclude password + all reset-flow token fields so they never surface in
+      // getProfile or any endpoint that returns req.user directly.
+      req.user = await User.findById(decoded.id).select(
+        "-password -verificationToken -verificationTokenExpiry -verificationAttempts -resetToken -resetTokenExpiry -previousPasswordHash"
+      );
 
       if (!req.user) {
         return res.status(401).json({ message: "User not found" });
+      }
+
+      // Invalidate tokens issued before a password reset.
+      // decoded.iat is in seconds; passwordChangedAt is a Date (ms).
+      if (req.user.passwordChangedAt) {
+        const changedAt = Math.floor(req.user.passwordChangedAt.getTime() / 1000);
+        if (decoded.iat < changedAt) {
+          clearAuthCookies(res);
+          return res.status(401).json({
+            message: "Your password was recently changed. Please log in again.",
+            code: "PASSWORD_CHANGED",
+          });
+        }
       }
 
       next();

@@ -81,11 +81,25 @@ const strictLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Answer-verification limiter — tighter than password reset (5 per 15 min per IP)
+const verifyAnswersLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: {
+    success: false,
+    error: "Too many verification attempts. Please try again later.",
+    retryAfter: "15 minutes",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   apiLimiter,
   authLimiter,
   loginLimiter,
   registerLimiter,
   passwordResetLimiter,
+  verifyAnswersLimiter,
   strictLimiter,
 };

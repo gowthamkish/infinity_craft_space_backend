@@ -2,21 +2,60 @@ const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const { generateTokens, setAuthCookies, clearAuthCookies } = require("../middlewares/authMiddleware");
 
+const { SECURITY_QUESTIONS } = require("../utils/securityQuestions");
+
+const normaliseAnswer = (str) => str.trim().toLowerCase().replace(/\s+/g, " ");
+
 const register = async (req, res) => {
   try {
+    const { username, email, password, securityQuestions: sqRaw } = req.body;
+
+    // Validate security questions presence
+    if (!Array.isArray(sqRaw) || sqRaw.length < 2) {
+      return res.status(400).json({ error: "Two security questions are required for account recovery." });
+    }
+
+    const chosen = sqRaw.slice(0, 2);
+    for (const q of chosen) {
+      if (typeof q.questionIndex !== "number" || q.questionIndex < 0 || q.questionIndex >= SECURITY_QUESTIONS.length) {
+        return res.status(400).json({ error: "Invalid security question selection." });
+      }
+      if (!q.answer || typeof q.answer !== "string" || q.answer.trim().length < 2) {
+        return res.status(400).json({ error: "Each security answer must be at least 2 characters." });
+      }
+    }
+    if (new Set(chosen.map((q) => q.questionIndex)).size !== chosen.length) {
+      return res.status(400).json({ error: "Please choose two different security questions." });
+    }
+
     const existingUser = await User.findOne({
-      $or: [{ email: req.body.email }, { username: req.body.username }],
+      $or: [{ email }, { username }],
     });
 
     if (existingUser) {
-      if (existingUser.email === req.body.email) {
+      if (existingUser.email === email) {
         return res.status(400).json({ error: "Email already registered" });
       }
       return res.status(400).json({ error: "Username already taken" });
     }
 
-    const hashed = await bcrypt.hash(req.body.password, 12);
-    const newUser = new User({ ...req.body, password: hashed });
+    const [hashed, hashedQuestions] = await Promise.all([
+      bcrypt.hash(password, 12),
+      Promise.all(
+        chosen.map(async (q) => ({
+          questionIndex: q.questionIndex,
+          answerHash: await bcrypt.hash(normaliseAnswer(q.answer), 12),
+        }))
+      ),
+    ]);
+
+    const newUser = new User({
+      username,
+      email,
+      password: hashed,
+      securityQuestions: hashedQuestions,
+      hasSecurityQuestions: true,
+    });
     await newUser.save();
 
     const tokens = generateTokens(newUser._id);
