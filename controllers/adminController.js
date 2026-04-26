@@ -1,3 +1,4 @@
+const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const Product = require("../models/Product");
 const Order = require("../models/Order");
@@ -69,6 +70,37 @@ const updateUserRole = async (req, res) => {
   } catch (error) {
     console.error("Update user role error:", error);
     res.status(500).json({ success: false, error: "Failed to update user role" });
+  }
+};
+
+const updateUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email, password } = req.body;
+
+    if (!email && !password) {
+      return res.status(400).json({ success: false, error: "Provide email or password to update" });
+    }
+
+    const user = await User.findById(id);
+    if (!user) return res.status(404).json({ success: false, error: "User not found" });
+
+    if (email) {
+      const exists = await User.findOne({ email, _id: { $ne: id } });
+      if (exists) return res.status(400).json({ success: false, error: "Email already in use by another account" });
+      user.email = email;
+    }
+    if (password) {
+      if (password.length < 6) return res.status(400).json({ success: false, error: "Password must be at least 6 characters" });
+      user.password = await bcrypt.hash(password, 12);
+    }
+
+    await user.save();
+    const updated = await User.findById(id).select("-password");
+    res.json({ success: true, message: "User updated successfully", user: updated });
+  } catch (error) {
+    console.error("Update user error:", error);
+    res.status(500).json({ success: false, error: "Failed to update user" });
   }
 };
 
@@ -509,6 +541,7 @@ module.exports = {
   getDashboard,
   getUsers,
   updateUserRole,
+  updateUser,
   getNotifications,
   getUnreadNotificationCount,
   markNotificationRead,

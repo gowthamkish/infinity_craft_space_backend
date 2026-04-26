@@ -132,7 +132,16 @@ function csrfProtect(req, res, next) {
   // Only enforce on state-changing methods
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
   // Skip CSRF check for Razorpay webhook (uses signature-based auth) and SSE
-  const skipPaths = ["/api/payment/webhook", "/api/shipping/webhook", "/api/sse/stream"];
+  // Login/register have no authenticated session to exploit, so CSRF is not needed.
+  // More importantly, iOS Safari (ITP) blocks cross-origin cookies, which breaks the
+  // double-submit cookie pattern for these first-time calls before any session exists.
+  const skipPaths = [
+    "/api/payment/webhook",
+    "/api/shipping/webhook",
+    "/api/sse/stream",
+    "/api/auth/login",
+    "/api/auth/register",
+  ];
   if (skipPaths.some((p) => req.path.startsWith(p))) return next();
 
   const cookieToken = req.cookies._csrf;
