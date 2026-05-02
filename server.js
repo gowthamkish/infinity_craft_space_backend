@@ -144,6 +144,7 @@ function csrfProtect(req, res, next) {
     "/api/auth/register",
     // Password-reset flow: unauthenticated calls before session exists
     "/api/auth/forgot-password",
+    "/api/auth/verify-otp",
     "/api/auth/verify-answers",
     "/api/auth/reset-password",
   ];
@@ -151,10 +152,26 @@ function csrfProtect(req, res, next) {
 
   const cookieToken = req.cookies._csrf;
   const headerToken = req.headers["x-csrf-token"];
-  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
-    return res.status(403).json({ success: false, error: "Invalid CSRF token" });
+
+  // Standard double-submit cookie check
+  if (cookieToken && headerToken && cookieToken === headerToken) return next();
+
+  // iOS Safari ITP blocks third-party cookies on cross-origin requests, so the
+  // _csrf cookie may never arrive. Fall back to Origin/Referer validation:
+  // if the request comes from a trusted origin AND includes any X-CSRF-Token header,
+  // it cannot be a cross-site forgery (browsers set Origin on all cross-origin requests
+  // and it is a forbidden header that JS cannot spoof).
+  if (headerToken) {
+    const origin = req.headers.origin || req.headers.referer || "";
+    const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const trusted = allowedOrigins.some((o) => origin.startsWith(o));
+    if (trusted) return next();
   }
-  next();
+
+  return res.status(403).json({ success: false, error: "Invalid CSRF token" });
 }
 app.use(csrfProtect);
 
