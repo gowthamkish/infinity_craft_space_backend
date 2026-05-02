@@ -63,6 +63,7 @@ const register = async (req, res) => {
 
     res.status(201).json({
       message: "User registered successfully",
+      accessToken: tokens.accessToken,
       user: {
         id: newUser._id,
         username: newUser.username,
@@ -126,6 +127,7 @@ const login = async (req, res) => {
     setAuthCookies(res, tokens);
 
     res.json({
+      accessToken: tokens.accessToken,
       user: {
         id: user._id,
         username: user.username,

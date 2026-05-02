@@ -155,6 +155,7 @@ const refreshAccessToken = async (req, res) => {
     setAuthCookies(res, tokens);
 
     res.json({
+      accessToken: tokens.accessToken,
       user: {
         id: user._id,
         username: user.username,
