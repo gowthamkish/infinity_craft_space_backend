@@ -193,7 +193,11 @@ app.use(
 // gowthamkish
 // gowthamkish93
 mongoose
-  .connect(process.env.MONGO_URI)
+  .connect(process.env.MONGO_URI, {
+    maxPoolSize: 10,              // up from default 5; handles concurrent requests under load
+    serverSelectionTimeoutMS: 5000, // fail fast if Atlas is unreachable
+    socketTimeoutMS: 45000,        // drop idle sockets after 45s
+  })
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.error(err));
 
@@ -220,29 +224,55 @@ app.use("/api/whatsapp", require("./routes/whatsapp"));
 // Dynamic sitemap (no auth required — for search engine crawlers)
 app.use("/", require("./routes/sitemap"));
 
-// Error handling middleware for payload too large
-app.use((error, req, res, next) => {
-  if (error.type === "entity.too.large") {
+// ── Centralised error handler ─────────────────────────────────────────────────
+// Differentiates operational errors (safe to expose) from programmer errors
+// (log + generic message) so Sentry doesn't fill up with expected 4xx noise.
+app.use((error, req, res, next) => { // eslint-disable-line no-unused-vars
+  // Payload too large (multer / express.json limit)
+  if (error.type === "entity.too.large" || error.status === 413) {
     return res.status(413).json({
       success: false,
-      error:
-        "Payload too large. Please reduce the number of images or image sizes.",
+      error: "Payload too large. Please reduce the number of images or image sizes.",
       details: "Maximum allowed payload size is 50MB",
     });
   }
-  next(error);
-});
 
-// Global error handler
-app.use((error, req, res, next) => {
+  // Mongoose bad ObjectId (e.g. /api/products/not-an-id)
+  if (error.name === "CastError" && error.kind === "ObjectId") {
+    return res.status(400).json({ success: false, error: "Invalid ID format" });
+  }
+
+  // Mongoose duplicate key (e.g. duplicate email on register)
+  if (error.code === 11000) {
+    const field = Object.keys(error.keyValue || {})[0] || "field";
+    return res.status(409).json({
+      success: false,
+      error: `${field.charAt(0).toUpperCase() + field.slice(1)} already exists`,
+    });
+  }
+
+  // Mongoose validation error (schema-level constraints)
+  if (error.name === "ValidationError") {
+    const messages = Object.values(error.errors).map((e) => e.message);
+    return res.status(400).json({ success: false, error: messages.join(", ") });
+  }
+
+  // JWT errors (malformed token outside of auth middleware)
+  if (error.name === "JsonWebTokenError" || error.name === "TokenExpiredError") {
+    return res.status(401).json({ success: false, error: "Invalid or expired token" });
+  }
+
+  // CORS rejection
+  if (error.message && error.message.startsWith("CORS:")) {
+    return res.status(403).json({ success: false, error: error.message });
+  }
+
+  // Programmer / unexpected error — log fully, return generic message
   console.error("Unhandled error:", error);
   res.status(500).json({
     success: false,
     error: "Internal server error",
-    message:
-      process.env.NODE_ENV === "development"
-        ? error.message
-        : "Something went wrong",
+    message: process.env.NODE_ENV === "development" ? error.message : "Something went wrong",
   });
 });
 
@@ -256,10 +286,10 @@ app.get("/health", (_req, res) =>
   }),
 );
 
-// ── Abandoned cart cron — daily at 10:00 AM ──────────────────────────────────
+// ── Abandoned cart cron — daily at 10:00 AM IST ──────────────────────────────
 cron.schedule("0 10 * * *", () => {
   require("./jobs/abandonedCartJob")();
-});
+}, { timezone: "Asia/Kolkata" });
 
 // ── WhatsApp retry cron — every 10 minutes, sweep failed/pending logs ─────────
 cron.schedule("*/10 * * * *", async () => {

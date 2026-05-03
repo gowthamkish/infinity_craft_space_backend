@@ -13,6 +13,8 @@ const CartSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now },
 });
 
+CartSchema.index({ userId: 1 }, { unique: true });
+
 CartSchema.pre("save", function (next) {
   this.updatedAt = new Date();
   next();

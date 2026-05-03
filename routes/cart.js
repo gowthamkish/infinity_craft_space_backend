@@ -47,51 +47,96 @@ router.get("/:userId", async (req, res) => {
   }
 });
 
-// Sync entire cart from frontend (replace cart contents)
-// Accepts optional clientUpdatedAt timestamp for last-write-wins conflict resolution.
-// If the server cart is newer than what the client last saw, we reject the write
-// so a stale second tab can't overwrite changes made in a newer tab.
+// Sync cart from frontend with merge-on-conflict strategy.
+//
+// Strategy:
+//   • If the server cart was NOT modified since the client's last sync
+//     (clientUpdatedAt >= cart.updatedAt), replace server cart with the
+//     client's version — the client is authoritative.
+//   • If the server cart IS newer (another tab / device wrote to it),
+//     merge by taking the MAX quantity per product from both sides, then
+//     return the merged cart so all tabs converge to the same state.
+//     This avoids the "second tab silently discards first tab's items" bug.
 router.post("/sync", async (req, res) => {
   try {
     const { userId, items, clientUpdatedAt } = req.body;
 
     if (!userId) {
-      return res.status(400).json({
-        success: false,
-        error: "User ID is required",
-      });
+      return res.status(400).json({ success: false, error: "User ID is required" });
     }
 
-    const cartItems = items.map((item) => ({
-      productId: item.product._id,
-      quantity: item.quantity,
-    }));
+    const incomingMap = new Map(
+      (items || []).map((item) => [item.product._id.toString(), item.quantity])
+    );
 
     let cart = await Cart.findOne({ userId });
 
     if (!cart) {
-      cart = new Cart({ userId, items: cartItems });
+      cart = new Cart({
+        userId,
+        items: [...incomingMap.entries()].map(([productId, quantity]) => ({ productId, quantity })),
+      });
     } else {
-      // Last-write-wins: reject if server cart was updated AFTER the client's snapshot
-      if (clientUpdatedAt && cart.updatedAt > new Date(clientUpdatedAt)) {
-        return res.status(409).json({
-          success: false,
-          conflict: true,
-          message: "Cart was updated from another session",
-          serverUpdatedAt: cart.updatedAt,
+      const serverIsNewer =
+        clientUpdatedAt && cart.updatedAt > new Date(clientUpdatedAt);
+
+      if (serverIsNewer) {
+        // Merge: union of both carts, taking max quantity per product so no
+        // items added in either tab are lost.
+        const mergedMap = new Map(
+          cart.items.map((item) => [item.productId.toString(), item.quantity])
+        );
+        incomingMap.forEach((qty, pid) => {
+          mergedMap.set(pid, Math.max(mergedMap.get(pid) || 0, qty));
         });
+        cart.items = [...mergedMap.entries()].map(([productId, quantity]) => ({
+          productId,
+          quantity,
+        }));
+      } else {
+        // Client is authoritative — straightforward replace.
+        cart.items = [...incomingMap.entries()].map(([productId, quantity]) => ({
+          productId,
+          quantity,
+        }));
       }
-      cart.items = cartItems;
     }
 
     await cart.save();
-    res.json({ success: true, message: "Cart synced successfully", updatedAt: cart.updatedAt });
+
+    // Always return the resolved cart so the calling tab can update its state.
+    const populated = await Cart.findById(cart._id).populate({
+      path: "items.productId",
+      select: "name price description image category subCategory stock trackInventory",
+    });
+
+    const resolvedItems = (populated.items || [])
+      .filter((item) => item.productId)
+      .map((item) => ({
+        product: {
+          _id: item.productId._id,
+          name: item.productId.name,
+          price: item.productId.price,
+          description: item.productId.description,
+          image: item.productId.image,
+          category: item.productId.category,
+          subCategory: item.productId.subCategory,
+          stock: item.productId.stock,
+          trackInventory: item.productId.trackInventory,
+        },
+        quantity: item.quantity,
+        totalPrice: item.quantity * item.productId.price,
+      }));
+
+    res.json({
+      success: true,
+      message: "Cart synced successfully",
+      updatedAt: cart.updatedAt,
+      items: resolvedItems,
+    });
   } catch (error) {
     console.error("Cart sync error:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

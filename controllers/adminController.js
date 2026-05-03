@@ -33,8 +33,39 @@ const getDashboard = async (req, res) => {
 
 const getUsers = async (req, res) => {
   try {
-    const users = await User.find().select("-password");
-    res.json(users);
+    const page  = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit = Math.min(100, parseInt(req.query.limit) || 50);
+    const search = req.query.search?.trim() || "";
+
+    const query = search
+      ? {
+          $or: [
+            { username: { $regex: search, $options: "i" } },
+            { email:    { $regex: search, $options: "i" } },
+          ],
+        }
+      : {};
+
+    const [users, total] = await Promise.all([
+      User.find(query)
+        .select("-password -securityQuestions -verificationToken -resetToken -otpHash -otpSalt")
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      User.countDocuments(query),
+    ]);
+
+    res.json({
+      success: true,
+      users,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
   } catch (error) {
     console.error("Get users error:", error);
     res.status(500).json({ success: false, error: "Failed to fetch users" });
@@ -167,188 +198,93 @@ const getAllOrders = async (req, res) => {
   }
 };
 
-const getAnalytics = async (req, res) => {
+// ── Analytics: fast summary (4 count queries, ~50–100ms) ─────────────────────
+// Returns aggregate KPIs for the dashboard header cards.
+// Cached 2 minutes — short enough to feel live, long enough to not hammer Atlas.
+const getAnalyticsSummary = async (req, res) => {
   try {
     const { period = "30" } = req.query;
     const daysAgo = parseInt(period);
+    const cacheKey = `admin:analytics:summary:${daysAgo}`;
 
-    const cacheKey = `admin:analytics:${daysAgo}`;
     const cached = await cache.get(cacheKey);
     if (cached) return res.json(cached);
+
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - daysAgo);
     startDate.setHours(0, 0, 0, 0);
 
-    const [totalUsers, totalProducts, totalOrders, totalRevenue] =
-      await Promise.all([
-        User.countDocuments(),
-        Product.countDocuments(),
-        Order.countDocuments(),
-        Order.aggregate([
-          { $match: { status: { $in: ["confirmed", "processing", "shipped", "delivered"] } } },
-          { $group: { _id: null, total: { $sum: "$totalAmount" } } },
-        ]),
-      ]);
-
-    const ordersInPeriod = await Order.find({ createdAt: { $gte: startDate } }).sort({ createdAt: 1 });
-
-    const revenueInPeriod = ordersInPeriod
-      .filter((o) => ["confirmed", "processing", "shipped", "delivered"].includes(o.status))
-      .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
-
-    const dailyRevenue = await Order.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: startDate },
-          status: { $in: ["confirmed", "processing", "shipped", "delivered"] },
-        },
-      },
-      {
-        $group: {
-          _id: { year: { $year: "$createdAt" }, month: { $month: "$createdAt" }, day: { $dayOfMonth: "$createdAt" } },
-          revenue: { $sum: "$totalAmount" },
-          orders: { $sum: 1 },
-        },
-      },
-      { $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 } },
-    ]);
-
-    const dailyData = dailyRevenue.map((item) => ({
-      date: `${item._id.year}-${String(item._id.month).padStart(2, "0")}-${String(item._id.day).padStart(2, "0")}`,
-      revenue: item.revenue,
-      orders: item.orders,
-    }));
-
-    const orderStatusDistribution = await Order.aggregate([
-      { $group: { _id: "$status", count: { $sum: 1 } } },
-    ]);
-
-    const topProducts = await Order.aggregate([
-      { $unwind: "$items" },
-      {
-        $group: {
-          _id: "$items.product.name",
-          totalQuantity: { $sum: "$items.quantity" },
-          totalRevenue: { $sum: "$items.totalPrice" },
-          category: { $first: "$items.product.category" },
-        },
-      },
-      { $sort: { totalQuantity: -1 } },
-      { $limit: 10 },
-    ]);
-
-    const revenueByCategory = await Order.aggregate([
-      { $unwind: "$items" },
-      {
-        $group: {
-          _id: "$items.product.category",
-          revenue: { $sum: "$items.totalPrice" },
-          quantity: { $sum: "$items.quantity" },
-        },
-      },
-      { $sort: { revenue: -1 } },
-    ]);
-
-    const recentOrders = await Order.find()
-      .populate("userId", "username email")
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .lean();
-
-    const newUsersInPeriod = await User.countDocuments({ createdAt: { $gte: startDate } });
-
-    const paidOrdersInPeriod = ordersInPeriod.filter((o) =>
-      ["confirmed", "processing", "shipped", "delivered"].includes(o.status),
-    );
-    const avgOrderValue = paidOrdersInPeriod.length > 0
-      ? revenueInPeriod / paidOrdersInPeriod.length
-      : 0;
-
-    const ordersByDayOfWeek = await Order.aggregate([
-      { $match: { createdAt: { $gte: startDate } } },
-      {
-        $group: {
-          _id: { $dayOfWeek: "$createdAt" },
-          count: { $sum: 1 },
-          revenue: { $sum: "$totalAmount" },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
-    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const weeklyData = ordersByDayOfWeek.map((item) => ({
-      day: dayNames[item._id - 1],
-      orders: item.count,
-      revenue: item.revenue,
-    }));
-
     const currentMonthStart = new Date();
     currentMonthStart.setDate(1);
     currentMonthStart.setHours(0, 0, 0, 0);
-
     const previousMonthStart = new Date(currentMonthStart);
     previousMonthStart.setMonth(previousMonthStart.getMonth() - 1);
 
-    const [currentMonthRevenue, previousMonthRevenue] = await Promise.all([
+    const PAID_STATUSES = ["confirmed", "processing", "shipped", "delivered"];
+
+    const [
+      totalUsers,
+      totalProducts,
+      totalOrders,
+      totalRevenueAgg,
+      newUsersInPeriod,
+      periodRevenueAgg,
+      periodOrderCount,
+      currentMonthRevenueAgg,
+      previousMonthRevenueAgg,
+      recentOrders,
+    ] = await Promise.all([
+      User.countDocuments(),
+      Product.countDocuments(),
+      Order.countDocuments(),
       Order.aggregate([
-        {
-          $match: {
-            createdAt: { $gte: currentMonthStart },
-            status: { $in: ["confirmed", "processing", "shipped", "delivered"] },
-          },
-        },
+        { $match: { status: { $in: PAID_STATUSES } } },
+        { $group: { _id: null, total: { $sum: "$totalAmount" }, count: { $sum: 1 } } },
+      ]),
+      User.countDocuments({ createdAt: { $gte: startDate } }),
+      Order.aggregate([
+        { $match: { createdAt: { $gte: startDate }, status: { $in: PAID_STATUSES } } },
+        { $group: { _id: null, total: { $sum: "$totalAmount" }, count: { $sum: 1 } } },
+      ]),
+      Order.countDocuments({ createdAt: { $gte: startDate } }),
+      Order.aggregate([
+        { $match: { createdAt: { $gte: currentMonthStart }, status: { $in: PAID_STATUSES } } },
         { $group: { _id: null, total: { $sum: "$totalAmount" } } },
       ]),
       Order.aggregate([
-        {
-          $match: {
-            createdAt: { $gte: previousMonthStart, $lt: currentMonthStart },
-            status: { $in: ["confirmed", "processing", "shipped", "delivered"] },
-          },
-        },
+        { $match: { createdAt: { $gte: previousMonthStart, $lt: currentMonthStart }, status: { $in: PAID_STATUSES } } },
         { $group: { _id: null, total: { $sum: "$totalAmount" } } },
       ]),
+      Order.find()
+        .populate("userId", "username email")
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean(),
     ]);
 
-    const currentRevenue = currentMonthRevenue[0]?.total || 0;
-    const prevRevenue = previousMonthRevenue[0]?.total || 0;
-    const revenueGrowth = prevRevenue > 0
-      ? (((currentRevenue - prevRevenue) / prevRevenue) * 100).toFixed(1)
+    const revenueInPeriod  = periodRevenueAgg[0]?.total || 0;
+    const paidInPeriod     = periodRevenueAgg[0]?.count || 0;
+    const currentRevenue   = currentMonthRevenueAgg[0]?.total || 0;
+    const prevRevenue      = previousMonthRevenueAgg[0]?.total || 0;
+    const revenueGrowth    = prevRevenue > 0
+      ? parseFloat((((currentRevenue - prevRevenue) / prevRevenue) * 100).toFixed(1))
       : 0;
 
-    const analyticsResult = {
+    const result = {
       success: true,
       period: daysAgo,
       summary: {
         totalUsers,
         totalProducts,
         totalOrders,
-        totalRevenue: totalRevenue[0]?.total || 0,
+        totalRevenue: totalRevenueAgg[0]?.total || 0,
         newUsersInPeriod,
-        ordersInPeriod: ordersInPeriod.length,
+        ordersInPeriod: periodOrderCount,
         revenueInPeriod,
-        avgOrderValue: Math.round(avgOrderValue),
-        revenueGrowth: parseFloat(revenueGrowth),
-      },
-      charts: {
-        dailyData,
-        weeklyData,
-        orderStatusDistribution: orderStatusDistribution.map((item) => ({
-          status: item._id || "unknown",
-          count: item.count,
-        })),
-        revenueByCategory: revenueByCategory.map((item) => ({
-          category: item._id || "Uncategorized",
-          revenue: item.revenue,
-          quantity: item.quantity,
-        })),
-        topProducts: topProducts.map((item) => ({
-          name: item._id || "Unknown Product",
-          quantity: item.totalQuantity,
-          revenue: item.totalRevenue,
-          category: item.category,
-        })),
+        avgOrderValue: paidInPeriod > 0 ? Math.round(revenueInPeriod / paidInPeriod) : 0,
+        revenueGrowth,
+        currentMonthRevenue: currentRevenue,
+        previousMonthRevenue: prevRevenue,
       },
       recentOrders: recentOrders.map((order) => ({
         _id: order._id,
@@ -361,17 +297,130 @@ const getAnalytics = async (req, res) => {
       })),
     };
 
-    await cache.set(cacheKey, analyticsResult, 300); // 5 min cache
-    res.json(analyticsResult);
+    await cache.set(cacheKey, result, 120); // 2 min
+    res.json(result);
   } catch (error) {
-    console.error("Analytics API error:", error);
-    res.status(500).json({
-      success: false,
-      error: "Failed to fetch analytics data",
-      message: error.message,
-    });
+    console.error("Analytics summary error:", error);
+    res.status(500).json({ success: false, error: "Failed to fetch analytics summary" });
   }
 };
+
+// ── Analytics: heavy chart data (8 aggregation pipelines, ~1–5s cold) ────────
+// Separated from the summary so the dashboard header cards load instantly
+// while charts load progressively. Cached 5 minutes — charts don't need
+// to be real-time; recent orders in the summary are sufficient for urgency.
+const getAnalyticsCharts = async (req, res) => {
+  try {
+    const { period = "30" } = req.query;
+    const daysAgo = parseInt(period);
+    const cacheKey = `admin:analytics:charts:${daysAgo}`;
+
+    const cached = await cache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - daysAgo);
+    startDate.setHours(0, 0, 0, 0);
+
+    const PAID_STATUSES = ["confirmed", "processing", "shipped", "delivered"];
+
+    const [
+      dailyRevenue,
+      ordersByDayOfWeek,
+      orderStatusDistribution,
+      topProducts,
+      revenueByCategory,
+    ] = await Promise.all([
+      Order.aggregate([
+        { $match: { createdAt: { $gte: startDate }, status: { $in: PAID_STATUSES } } },
+        {
+          $group: {
+            _id: { year: { $year: "$createdAt" }, month: { $month: "$createdAt" }, day: { $dayOfMonth: "$createdAt" } },
+            revenue: { $sum: "$totalAmount" },
+            orders:  { $sum: 1 },
+          },
+        },
+        { $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 } },
+      ]),
+      Order.aggregate([
+        { $match: { createdAt: { $gte: startDate } } },
+        { $group: { _id: { $dayOfWeek: "$createdAt" }, count: { $sum: 1 }, revenue: { $sum: "$totalAmount" } } },
+        { $sort: { _id: 1 } },
+      ]),
+      Order.aggregate([
+        { $group: { _id: "$status", count: { $sum: 1 } } },
+      ]),
+      Order.aggregate([
+        { $unwind: "$items" },
+        {
+          $group: {
+            _id: "$items.product.name",
+            totalQuantity: { $sum: "$items.quantity" },
+            totalRevenue:  { $sum: "$items.totalPrice" },
+            category:      { $first: "$items.product.category" },
+          },
+        },
+        { $sort: { totalQuantity: -1 } },
+        { $limit: 10 },
+      ]),
+      Order.aggregate([
+        { $unwind: "$items" },
+        {
+          $group: {
+            _id: "$items.product.category",
+            revenue:  { $sum: "$items.totalPrice" },
+            quantity: { $sum: "$items.quantity" },
+          },
+        },
+        { $sort: { revenue: -1 } },
+      ]),
+    ]);
+
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+    const result = {
+      success: true,
+      period: daysAgo,
+      charts: {
+        dailyData: dailyRevenue.map((item) => ({
+          date: `${item._id.year}-${String(item._id.month).padStart(2, "0")}-${String(item._id.day).padStart(2, "0")}`,
+          revenue: item.revenue,
+          orders:  item.orders,
+        })),
+        weeklyData: ordersByDayOfWeek.map((item) => ({
+          day:     dayNames[item._id - 1],
+          orders:  item.count,
+          revenue: item.revenue,
+        })),
+        orderStatusDistribution: orderStatusDistribution.map((item) => ({
+          status: item._id || "unknown",
+          count:  item.count,
+        })),
+        revenueByCategory: revenueByCategory.map((item) => ({
+          category: item._id || "Uncategorized",
+          revenue:  item.revenue,
+          quantity: item.quantity,
+        })),
+        topProducts: topProducts.map((item) => ({
+          name:     item._id || "Unknown Product",
+          quantity: item.totalQuantity,
+          revenue:  item.totalRevenue,
+          category: item.category,
+        })),
+      },
+    };
+
+    await cache.set(cacheKey, result, 300); // 5 min
+    res.json(result);
+  } catch (error) {
+    console.error("Analytics charts error:", error);
+    res.status(500).json({ success: false, error: "Failed to fetch analytics charts" });
+  }
+};
+
+// Keep the original combined endpoint for backwards compatibility — it now just
+// calls summary sequentially (charts are fetched separately by the frontend).
+const getAnalytics = async (req, res) => getAnalyticsSummary(req, res);
 
 const getPredictions = async (req, res) => {
   try {
@@ -547,5 +596,7 @@ module.exports = {
   markNotificationRead,
   getAllOrders,
   getAnalytics,
+  getAnalyticsSummary,
+  getAnalyticsCharts,
   getPredictions,
 };

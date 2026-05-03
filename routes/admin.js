@@ -11,6 +11,8 @@ const {
   markNotificationRead,
   getAllOrders,
   getAnalytics,
+  getAnalyticsSummary,
+  getAnalyticsCharts,
   getPredictions,
 } = require("../controllers/adminController");
 
@@ -29,7 +31,9 @@ router.get(
 );
 router.put("/notifications/:id/read", protect, isAdmin, markNotificationRead);
 router.get("/orders", protect, isAdmin, getAllOrders);
-router.get("/analytics", protect, isAdmin, getAnalytics);
-router.get("/predictions", protect, isAdmin, getPredictions);
+router.get("/analytics",        protect, isAdmin, getAnalytics);
+router.get("/analytics/summary", protect, isAdmin, getAnalyticsSummary);
+router.get("/analytics/charts",  protect, isAdmin, getAnalyticsCharts);
+router.get("/predictions",       protect, isAdmin, getPredictions);
 
 module.exports = router;
