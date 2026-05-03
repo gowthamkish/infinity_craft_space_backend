@@ -18,8 +18,8 @@ const { sanitizeInput } = require("./middlewares/validators");
 const crypto = require("crypto");
 const app = express();
 
-// Trust proxy for rate limiting behind reverse proxy (Render, Heroku, etc.)
-app.set("trust proxy", 1);
+// Trust only known private/loopback ranges — prevents X-Forwarded-For spoofing on Render
+app.set("trust proxy", "loopback, linklocal, uniquelocal");
 
 // Log allowed origins for debugging
 const allowedOrigins = process.env.ALLOWED_ORIGINS

@@ -187,16 +187,17 @@ const isAdmin = (req, res, next) => {
 
 // Optional auth - doesn't fail if no token, but sets user if valid token present
 const optionalAuth = async (req, res, next) => {
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith("Bearer")
-  ) {
+  const token =
+    (req.headers.authorization?.startsWith("Bearer") &&
+      req.headers.authorization.split(" ")[1]) ||
+    req.cookies?.accessToken ||
+    null;
+
+  if (token) {
     try {
-      const token = req.headers.authorization.split(" ")[1];
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       req.user = await User.findById(decoded.id).select("-password");
     } catch (err) {
-      // Silently fail for optional auth
       req.user = null;
     }
   } else {
