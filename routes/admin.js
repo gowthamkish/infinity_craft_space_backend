@@ -6,6 +6,7 @@ const {
   getUsers,
   updateUserRole,
   updateUser,
+  deleteUser,
   getNotifications,
   getUnreadNotificationCount,
   markNotificationRead,
@@ -22,6 +23,7 @@ router.get("/dashboard", protect, isAdmin, getDashboard);
 router.get("/users", protect, isAdmin, getUsers);
 router.put("/users/:id/role", protect, isAdmin, updateUserRole);
 router.patch("/users/:id", protect, isAdmin, updateUser);
+router.delete("/users/:id", protect, isAdmin, deleteUser);
 router.get("/notifications", protect, isAdmin, getNotifications);
 router.get(
   "/notifications/unread-count",

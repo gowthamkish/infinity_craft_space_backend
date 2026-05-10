@@ -135,6 +135,21 @@ const updateUser = async (req, res) => {
   }
 };
 
+const deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (id === req.user._id.toString()) {
+      return res.status(400).json({ success: false, error: "You cannot delete your own account." });
+    }
+    const user = await User.findByIdAndDelete(id);
+    if (!user) return res.status(404).json({ success: false, error: "User not found" });
+    res.json({ success: true, message: "User deleted successfully" });
+  } catch (error) {
+    console.error("Delete user error:", error);
+    res.status(500).json({ success: false, error: "Failed to delete user" });
+  }
+};
+
 const getNotifications = async (req, res) => {
   try {
     const notifications = await Notification.find()
@@ -591,6 +606,7 @@ module.exports = {
   getUsers,
   updateUserRole,
   updateUser,
+  deleteUser,
   getNotifications,
   getUnreadNotificationCount,
   markNotificationRead,
