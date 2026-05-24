@@ -218,6 +218,16 @@ router.post("/", protect, isAdmin, productValidation, async (req, res) => {
       isCustomizable: req.body.isCustomizable === true || req.body.isCustomizable === "true",
       processingDaysMin: req.body.processingDaysMin !== undefined ? parseInt(req.body.processingDaysMin) : 10,
       processingDaysMax: req.body.processingDaysMax !== undefined ? parseInt(req.body.processingDaysMax) : 12,
+      showColorPickerToUsers: req.body.showColorPickerToUsers === true || req.body.showColorPickerToUsers === "true",
+      colors: Array.isArray(req.body.colors)
+        ? req.body.colors.map((c, i) => ({
+            name:           String(c.name || "").slice(0, 30),
+            hex:            String(c.hex || "#000000"),
+            stock:          c.stock !== undefined && c.stock !== "" ? parseInt(c.stock) : 0,
+            visibleToUsers: c.visibleToUsers !== false,
+            sortOrder:      c.sortOrder !== undefined ? parseInt(c.sortOrder) : i,
+          }))
+        : [],
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -468,6 +478,16 @@ router.put("/:id", protect, isAdmin, async (req, res) => {
       updateData.processingDaysMin = parseInt(req.body.processingDaysMin);
     if (req.body.processingDaysMax !== undefined)
       updateData.processingDaysMax = parseInt(req.body.processingDaysMax);
+    if (req.body.showColorPickerToUsers !== undefined)
+      updateData.showColorPickerToUsers = req.body.showColorPickerToUsers === true || req.body.showColorPickerToUsers === "true";
+    if (Array.isArray(req.body.colors))
+      updateData.colors = req.body.colors.map((c, i) => ({
+        name:           String(c.name || "").slice(0, 30),
+        hex:            String(c.hex || "#000000"),
+        stock:          c.stock !== undefined && c.stock !== "" ? parseInt(c.stock) : 0,
+        visibleToUsers: c.visibleToUsers !== false,
+        sortOrder:      c.sortOrder !== undefined ? parseInt(c.sortOrder) : i,
+      }));
 
     // Handle multiple images update
     if (images && Array.isArray(images) && images.length > 0) {

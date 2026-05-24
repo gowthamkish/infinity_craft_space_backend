@@ -101,6 +101,18 @@ const ProductSchema = new mongoose.Schema({
   variantTypes: [String], // ['color', 'size', 'material']
   variants: [VariantSchema],
 
+  // Color variants
+  showColorPickerToUsers: { type: Boolean, default: false },
+  colors: [
+    {
+      name:             { type: String, required: true, maxlength: 30 },
+      hex:              { type: String, required: true },
+      stock:            { type: Number, default: 0, min: 0 },
+      visibleToUsers:   { type: Boolean, default: true },
+      sortOrder:        { type: Number, default: 0 },
+    },
+  ],
+
   // Bulk discounts
   bulkDiscounts: [BulkDiscountSchema],
 
