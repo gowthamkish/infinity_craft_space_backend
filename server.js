@@ -221,6 +221,8 @@ app.use("/api/delivery", require("./routes/delivery"));
 app.use("/api/sse", require("./routes/sse"));
 // WhatsApp notifications (admin APIs: logs, test, resend)
 app.use("/api/whatsapp", require("./routes/whatsapp"));
+// AI chat agent (public + optionalAuth; rate limited inside the route)
+app.use("/api/chat", require("./routes/chat"));
 // Dynamic sitemap (no auth required — for search engine crawlers)
 app.use("/", require("./routes/sitemap"));
 

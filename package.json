@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@sentry/node": "^10.49.0",
     "bcryptjs": "^3.0.2",
     "cloudinary": "^1.41.3",
@@ -19,7 +20,8 @@
     "multer-storage-cloudinary": "^4.0.0",
     "node-cron": "^3.0.2",
     "nodemailer": "^6.9.7",
-    "razorpay": "^2.9.6"
+    "razorpay": "^2.9.6",
+    "voyageai": "^0.4.0"
   },
   "name": "backend",
   "version": "1.0.0",

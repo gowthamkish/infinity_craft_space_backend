@@ -94,6 +94,19 @@ const verifyAnswersLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Chat/AI limiter — each request costs money, cap at 20 messages per 10 min per IP
+const chatLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 20,
+  message: {
+    success: false,
+    error: "You've sent too many messages. Please wait a few minutes before trying again.",
+    retryAfter: "10 minutes",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   apiLimiter,
   authLimiter,
@@ -102,4 +115,5 @@ module.exports = {
   passwordResetLimiter,
   verifyAnswersLimiter,
   strictLimiter,
+  chatLimiter,
 };

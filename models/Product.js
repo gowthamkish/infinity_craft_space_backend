@@ -142,6 +142,11 @@ const ProductSchema = new mongoose.Schema({
     default: 0,
   },
 
+  // Vector embedding for Atlas Vector Search (RAG chatbot)
+  // Populated by utils/embeddings.js — not returned in normal queries
+  embedding: { type: [Number], select: false },
+  embeddingUpdatedAt: { type: Date, select: false },
+
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
   lastEditedBy: {
@@ -181,6 +186,24 @@ ProductSchema.pre("save", async function (next) {
     this.slug = `${base}-${suffix}`;
   }
   next();
+});
+
+// Re-embed asynchronously whenever descriptive fields change.
+// Fire-and-forget — don't block the save response waiting for Voyage.
+const EMBEDDING_FIELDS = ["name", "description", "category", "subCategory", "tags", "isCustomizable", "colors", "variants", "price", "seoKeywords"];
+ProductSchema.post("save", function (doc) {
+  if (!process.env.VOYAGE_API_KEY) return;
+  const changed = EMBEDDING_FIELDS.some((f) => doc.isDirectModified?.(f));
+  if (!changed && doc.embedding?.length) return; // nothing descriptive changed
+  const { embedText, buildProductText } = require("../utils/embeddings");
+  embedText(buildProductText(doc))
+    .then((embedding) =>
+      doc.constructor.updateOne(
+        { _id: doc._id },
+        { $set: { embedding, embeddingUpdatedAt: new Date() } },
+      ),
+    )
+    .catch((err) => console.error("[Embedding] Failed to update product embedding:", err.message));
 });
 
 module.exports = mongoose.model("Product", ProductSchema);
