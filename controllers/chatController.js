@@ -165,38 +165,31 @@ function formatProducts(docs) {
 }
 
 /**
- * Text/regex fallback — uses MongoDB's existing text index plus regex on name/tags.
- * Works even when no embeddings have been generated yet.
+ * Regex-only fallback search — no text index required.
+ * Splits query into keywords and matches across name, description, tags, category.
  */
 async function textSearchProducts(query, baseFilter) {
-  // Split query into individual keywords for regex matching
   const keywords = query
     .toLowerCase()
     .replace(/[^\w\s]/g, " ")
     .split(/\s+/)
     .filter((w) => w.length > 2);
 
-  // Build an $or that checks the text index AND per-keyword regex on name/tags/category
-  const orClauses = [];
-
-  // Full-phrase text index search
-  if (query.trim()) {
-    orClauses.push({ $text: { $search: query } });
+  if (!keywords.length) {
+    return Product.find(baseFilter)
+      .select(PRODUCT_PROJECTION)
+      .sort({ averageRating: -1, stock: -1 })
+      .limit(6)
+      .lean();
   }
 
-  // Per-keyword regex fallback (catches partial words like "purse", "yarn")
-  keywords.forEach((kw) => {
+  // Each keyword must match at least one of the searchable fields
+  const andClauses = keywords.map((kw) => {
     const re = { $regex: kw, $options: "i" };
-    orClauses.push({ name: re }, { description: re }, { tags: re },
-                   { category: re }, { subCategory: re });
+    return { $or: [{ name: re }, { description: re }, { tags: re }, { category: re }, { subCategory: re }] };
   });
 
-  const filter = {
-    ...baseFilter,
-    ...(orClauses.length ? { $or: orClauses } : {}),
-  };
-
-  return Product.find(filter)
+  return Product.find({ ...baseFilter, $and: andClauses })
     .select(PRODUCT_PROJECTION)
     .sort({ averageRating: -1, stock: -1 })
     .limit(6)
