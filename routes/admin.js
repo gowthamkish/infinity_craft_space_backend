@@ -16,6 +16,7 @@ const {
   getAnalyticsCharts,
   getPredictions,
 } = require("../controllers/adminController");
+const { getCsvTemplate, bulkImport, aiAutofill } = require("../controllers/bulkImportController");
 
 // All admin routes explicitly protected with both protect and isAdmin middleware
 // to ensure they work correctly even on mobile browsers
@@ -37,5 +38,10 @@ router.get("/analytics",        protect, isAdmin, getAnalytics);
 router.get("/analytics/summary", protect, isAdmin, getAnalyticsSummary);
 router.get("/analytics/charts",  protect, isAdmin, getAnalyticsCharts);
 router.get("/predictions",       protect, isAdmin, getPredictions);
+
+// Product bulk-import + AI autofill
+router.get("/products/csv-template",  protect, isAdmin, getCsvTemplate);
+router.post("/products/bulk-import",  protect, isAdmin, bulkImport);
+router.post("/products/ai-autofill",  protect, isAdmin, aiAutofill);
 
 module.exports = router;

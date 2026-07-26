@@ -21,7 +21,8 @@
     "node-cron": "^3.0.2",
     "nodemailer": "^6.9.7",
     "razorpay": "^2.9.6",
-    "voyageai": "^0.4.0"
+    "voyageai": "^0.4.0",
+    "xlsx": "^0.18.5"
   },
   "name": "backend",
   "version": "1.0.0",
