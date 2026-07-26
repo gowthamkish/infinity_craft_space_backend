@@ -12,12 +12,12 @@ const getDashboard = async (req, res) => {
 
     const [userCount, productCount, orderCount] = await Promise.all([
       User.countDocuments(),
-      Product.countDocuments(),
+      Product.countDocuments({ isActive: true }),
       Order.countDocuments(),
     ]);
 
     const result = { userCount, productCount, orderCount };
-    await cache.set("dashboard:counts", result, 120); // 2 min cache
+    await cache.set("dashboard:counts", result, 30); // 30 sec cache
     res.json(result);
   } catch (error) {
     console.error("Dashboard counts error:", error);
@@ -250,7 +250,7 @@ const getAnalyticsSummary = async (req, res) => {
       recentOrders,
     ] = await Promise.all([
       User.countDocuments(),
-      Product.countDocuments(),
+      Product.countDocuments({ isActive: true }),
       Order.countDocuments(),
       Order.aggregate([
         { $match: { status: { $in: PAID_STATUSES } } },
