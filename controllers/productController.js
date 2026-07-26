@@ -108,28 +108,33 @@ const checkStock = async (req, res) => {
       return res.status(400).json({ success: false, error: "Items array is required" });
     }
 
+    // Batch-fetch all products in one query
+    const productIds = items.map((i) => i.productId).filter(Boolean);
+    const dbProducts = await Product.find({ _id: { $in: productIds } }).lean();
+    const productMap = Object.fromEntries(dbProducts.map((p) => [String(p._id), p]));
+
     const stockStatus = [];
     let allAvailable = true;
 
     for (const item of items) {
-      const product = await Product.findById(item.productId);
+      const product = productMap[String(item.productId)];
       if (!product) {
         stockStatus.push({ productId: item.productId, available: false, error: "Product not found" });
         allAvailable = false;
         continue;
       }
 
-      const isAvailable = !product.trackInventory || product.stock >= item.quantity;
-      const isLowStock = product.trackInventory && product.stock <= product.lowStockThreshold && product.stock > 0;
-      const isOutOfStock = product.trackInventory && product.stock <= 0;
+      const isAvailable   = !product.trackInventory || product.stock >= item.quantity;
+      const isLowStock    = product.trackInventory && product.stock <= product.lowStockThreshold && product.stock > 0;
+      const isOutOfStock  = product.trackInventory && product.stock <= 0;
 
       stockStatus.push({
-        productId: item.productId,
-        name: product.name,
+        productId:         item.productId,
+        name:              product.name,
         requestedQuantity: item.quantity,
-        availableStock: product.trackInventory ? product.stock : null,
-        trackInventory: product.trackInventory,
-        available: isAvailable,
+        availableStock:    product.trackInventory ? product.stock : null,
+        trackInventory:    product.trackInventory,
+        available:         isAvailable,
         isLowStock,
         isOutOfStock,
         lowStockThreshold: product.lowStockThreshold,
@@ -152,9 +157,16 @@ const updateStock = async (req, res) => {
       return res.status(400).json({ success: false, error: "Items array is required" });
     }
 
+    // Batch-fetch all products in one query
+    const productIds = items.map((i) => i.productId).filter(Boolean);
+    const dbProducts = await Product.find({ _id: { $in: productIds } }).lean();
+    const productMap = Object.fromEntries(dbProducts.map((p) => [String(p._id), p]));
+
     const results = [];
+    const bulkOps = [];
+
     for (const item of items) {
-      const product = await Product.findById(item.productId);
+      const product = productMap[String(item.productId)];
       if (!product) {
         results.push({ productId: item.productId, success: false, error: "Product not found" });
         continue;
@@ -162,24 +174,33 @@ const updateStock = async (req, res) => {
 
       if (product.trackInventory) {
         const newStock = Math.max(0, product.stock - item.quantity);
-        await Product.findByIdAndUpdate(item.productId, { stock: newStock, updatedAt: new Date() });
+        // Collect update for bulk execution
+        bulkOps.push({
+          updateOne: {
+            filter: { _id: product._id },
+            update: { $set: { stock: newStock, updatedAt: new Date() } },
+          },
+        });
         results.push({
-          productId: item.productId,
-          name: product.name,
-          previousStock: product.stock,
+          productId:       item.productId,
+          name:            product.name,
+          previousStock:   product.stock,
           quantityDeducted: item.quantity,
           newStock,
-          success: true,
+          success:         true,
         });
       } else {
         results.push({
           productId: item.productId,
-          name: product.name,
-          success: true,
-          message: "Inventory tracking disabled for this product",
+          name:      product.name,
+          success:   true,
+          message:   "Inventory tracking disabled for this product",
         });
       }
     }
+
+    // Single round-trip for all stock updates
+    if (bulkOps.length) await Product.bulkWrite(bulkOps);
 
     res.json({ success: true, results });
   } catch (err) {

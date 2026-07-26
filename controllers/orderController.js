@@ -154,21 +154,19 @@ const updateOrderStatus = async (req, res) => {
       return res.status(500).json({ success: false, message: "Failed to update order status" });
     }
 
-    // Restore stock if order is cancelled from an active state
+    // Restore stock if order is cancelled from an active state.
+    // Use bulkWrite with $inc — atomic, no read-before-write, single round-trip.
     if (status === "cancelled" && ["confirmed", "processing", "shipped"].includes(oldStatus)) {
       try {
-        for (const item of order.items) {
-          if (item.product && item.product._id) {
-            const product = await Product.findById(item.product._id);
-            if (product && product.trackInventory) {
-              const newStock = product.stock + item.quantity;
-              await Product.findByIdAndUpdate(item.product._id, {
-                stock: newStock,
-                updatedAt: new Date(),
-              });
-            }
-          }
-        }
+        const restoreOps = order.items
+          .filter((item) => item.product?._id)
+          .map((item) => ({
+            updateOne: {
+              filter: { _id: item.product._id, trackInventory: true },
+              update: { $inc: { stock: item.quantity }, $set: { updatedAt: new Date() } },
+            },
+          }));
+        if (restoreOps.length) await Product.bulkWrite(restoreOps);
       } catch (stockError) {
         console.warn("Warning: Could not restore stock -", stockError.message);
       }

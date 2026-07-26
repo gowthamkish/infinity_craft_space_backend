@@ -31,11 +31,14 @@ router.get("/", protect, async (req, res) => {
       query.status = status;
     }
 
+    const safeLimit = Math.min(50, Math.max(1, parseInt(limit, 10) || 10));
+    const safePage  = Math.max(1, parseInt(page, 10) || 1);
+
     const returnRequests = await ReturnRequest.find(query)
       .populate("orderId", "orderNumber totalAmount")
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip((safePage - 1) * safeLimit)
+      .limit(safeLimit);
 
     const total = await ReturnRequest.countDocuments(query);
 
@@ -44,8 +47,8 @@ router.get("/", protect, async (req, res) => {
       data: returnRequests,
       pagination: {
         total,
-        page: parseInt(page),
-        pages: Math.ceil(total / limit),
+        page: safePage,
+        pages: Math.ceil(total / safeLimit),
       },
     });
   } catch (error) {
@@ -344,12 +347,15 @@ router.get("/admin/all", protect, isAdmin, async (req, res) => {
       query.status = status;
     }
 
+    const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const safePage  = Math.max(1, parseInt(page, 10) || 1);
+
     const returnRequests = await ReturnRequest.find(query)
       .populate("userId", "email username")
       .populate("orderId", "orderNumber totalAmount")
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip((safePage - 1) * safeLimit)
+      .limit(safeLimit);
 
     const total = await ReturnRequest.countDocuments(query);
 
@@ -358,8 +364,8 @@ router.get("/admin/all", protect, isAdmin, async (req, res) => {
       data: returnRequests,
       pagination: {
         total,
-        page: parseInt(page),
-        pages: Math.ceil(total / limit),
+        page: safePage,
+        pages: Math.ceil(total / safeLimit),
       },
     });
   } catch (error) {

@@ -55,43 +55,6 @@ router.post("/", protect, async (req, res) => {
       return res.status(400).json({ message: "Currency is required" });
     }
 
-    // Stock validation before order creation
-    if (items && items.length > 0) {
-      const stockErrors = [];
-      for (const item of items) {
-        // Support both item.productId and item.product._id (frontend sends item.product._id)
-        const productId = item.productId || (item.product && item.product._id);
-        if (productId) {
-          const product = await Product.findById(productId);
-          if (product && product.trackInventory) {
-            if (product.stock <= 0) {
-              stockErrors.push({
-                productId: productId,
-                name: product.name,
-                error: "Out of stock",
-              });
-            } else if (product.stock < item.quantity) {
-              stockErrors.push({
-                productId: productId,
-                name: product.name,
-                error: `Only ${product.stock} available`,
-                availableStock: product.stock,
-                requestedQuantity: item.quantity,
-              });
-            }
-          }
-        }
-      }
-
-      if (stockErrors.length > 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Some items are out of stock or have insufficient quantity",
-          stockErrors,
-        });
-      }
-    }
-
     // Convert amount from paise to rupees for database storage
     const totalAmount = amount / 100;
 
@@ -99,34 +62,52 @@ router.post("/", protect, async (req, res) => {
 
     // If items are provided, use them; otherwise get from cart or create default
     if (items && items.length > 0) {
-      // Validate and process provided items with proper product details
+      // Collect all product IDs in one pass, then batch-fetch — eliminates N+1 queries
+      const productIds = items
+        .map((item) => item.productId || (item.product && item.product._id))
+        .filter(Boolean);
+
+      const dbProducts = productIds.length
+        ? await Product.find({ _id: { $in: productIds } }).lean()
+        : [];
+      const productMap = Object.fromEntries(dbProducts.map((p) => [String(p._id), p]));
+
+      // Single pass: validate stock AND build order items together
+      const stockErrors = [];
       for (const item of items) {
-        let productData = null;
-
-        // Support both item.productId and item.product._id (frontend sends item.product._id)
         const productId = item.productId || (item.product && item.product._id);
+        const qty = item.quantity || 1;
+        const dbProduct = productId ? productMap[String(productId)] : null;
 
-        // If productId is provided, fetch full product details from DB
-        if (productId) {
-          productData = await Product.findById(productId);
-        }
-
-        // Use fetched product data or fallback to provided data
-        if (productData) {
+        if (dbProduct) {
+          // Stock validation
+          if (dbProduct.trackInventory) {
+            if (dbProduct.stock <= 0) {
+              stockErrors.push({ productId, name: dbProduct.name, error: "Out of stock" });
+              continue;
+            } else if (dbProduct.stock < qty) {
+              stockErrors.push({
+                productId, name: dbProduct.name,
+                error: `Only ${dbProduct.stock} available`,
+                availableStock: dbProduct.stock, requestedQuantity: qty,
+              });
+              continue;
+            }
+          }
           orderItems.push({
             product: {
-              _id: productData._id,
-              name: productData.name,
-              price: productData.price,
-              description: productData.description,
-              category: productData.category,
-              subCategory: productData.subCategory,
+              _id: dbProduct._id,
+              name: dbProduct.name,
+              price: dbProduct.price,
+              description: dbProduct.description,
+              category: dbProduct.category,
+              subCategory: dbProduct.subCategory,
             },
-            quantity: item.quantity || 1,
-            totalPrice: productData.price * (item.quantity || 1),
+            quantity: qty,
+            totalPrice: dbProduct.price * qty,
           });
         } else if (item.product) {
-          // Frontend sends item.product with full product details
+          // Fallback: frontend-supplied product snapshot (no DB record found)
           orderItems.push({
             product: {
               _id: item.product._id || null,
@@ -136,26 +117,31 @@ router.post("/", protect, async (req, res) => {
               category: item.product.category || "General",
               subCategory: item.product.subCategory || "Product",
             },
-            quantity: item.quantity || 1,
-            totalPrice: (item.product.price || 0) * (item.quantity || 1),
+            quantity: qty,
+            totalPrice: (item.product.price || 0) * qty,
           });
-        } else {
-          // Only use defaults if no product found and proper data not provided
-          if (productId || item.name) {
-            orderItems.push({
-              product: {
-                _id: productId || null,
-                name: item.name || "Product",
-                price: item.price || 0,
-                description: item.description || "",
-                category: item.category || "General",
-                subCategory: item.subCategory || "Product",
-              },
-              quantity: item.quantity || 1,
-              totalPrice: (item.price || 0) * (item.quantity || 1),
-            });
-          }
+        } else if (productId || item.name) {
+          orderItems.push({
+            product: {
+              _id: productId || null,
+              name: item.name || "Product",
+              price: item.price || 0,
+              description: item.description || "",
+              category: item.category || "General",
+              subCategory: item.subCategory || "Product",
+            },
+            quantity: qty,
+            totalPrice: (item.price || 0) * qty,
+          });
         }
+      }
+
+      if (stockErrors.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Some items are out of stock or have insufficient quantity",
+          stockErrors,
+        });
       }
     } else {
       // Try to get from cart first

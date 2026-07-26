@@ -171,6 +171,10 @@ ProductSchema.index({ isActive: 1, category: 1, price: 1 });
 ProductSchema.index({ trackInventory: 1, stock: 1, lowStockThreshold: 1 });
 // Slug lookups (added with slug field)
 ProductSchema.index({ slug: 1 }, { unique: true, sparse: true });
+// Covers getAllProducts filter: isActive + category + subCategory (sorted by price or rating)
+ProductSchema.index({ isActive: 1, category: 1, subCategory: 1, price: 1 });
+// Default sort: newest first
+ProductSchema.index({ createdAt: -1 });
 
 // Auto-generate slug from name before saving
 ProductSchema.pre("save", async function (next) {
