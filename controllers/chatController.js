@@ -19,6 +19,10 @@ const crypto = require("crypto");
 const Anthropic = require("@anthropic-ai/sdk");
 const Product = require("../models/Product");
 const Order = require("../models/Order");
+const Cart = require("../models/Cart");
+const Coupon = require("../models/Coupon");
+const ReturnRequest = require("../models/ReturnRequest");
+const User = require("../models/User");
 const KnowledgeChunk = require("../models/KnowledgeChunk");
 const ChatLog = require("../models/ChatLog");
 const { embedText, buildProductText } = require("../utils/embeddings");
@@ -44,7 +48,16 @@ Rules:
 - When listing products, present them as card-friendly compact summaries (name, price, key features)
 - Prices are in Indian Rupees (₹)
 - If you cannot find something, say so honestly and suggest alternatives or contact support
-- Do not discuss competitors`;
+- Do not discuss competitors
+
+Action rules (cart, wishlist, returns):
+- Always confirm with the user before adding to cart or wishlist — "Shall I add X to your cart?"
+- Before initiating a return, always call check_order_status first so you know the items and status
+- For returns, always ask which item(s) and reason before calling initiate_return
+- Valid return reasons: defective, wrong_item, not_as_described, size_mismatch, quality_issue, changed_mind, duplicate_order, other
+- Valid return types: return, exchange, refund
+- If the user is not logged in, tell them to log in before performing any cart/wishlist/return action
+- After a successful cart add, tell the user what was added and the current item count`;
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
 const TOOLS = [
@@ -137,6 +150,113 @@ const TOOLS = [
         },
       },
       required: ["pincode"],
+    },
+  },
+  {
+    name: "add_to_cart",
+    description:
+      "Add a product to the logged-in customer's cart. Always confirm with the user before calling this. Use search_products or get_product_details first to get the productId.",
+    input_schema: {
+      type: "object",
+      properties: {
+        productId: {
+          type: "string",
+          description: "MongoDB _id of the product to add",
+        },
+        quantity: {
+          type: "number",
+          description: "Number of units to add (default 1)",
+        },
+        colorName: {
+          type: "string",
+          description: "Optional color variant the customer chose, e.g. 'lavender'",
+        },
+      },
+      required: ["productId"],
+    },
+  },
+  {
+    name: "validate_coupon",
+    description:
+      "Check if a coupon code is valid and calculate the discount amount for the customer's current cart total. Returns discount value and type.",
+    input_schema: {
+      type: "object",
+      properties: {
+        code: {
+          type: "string",
+          description: "Coupon code to validate, e.g. 'SAVE20'",
+        },
+        cartTotal: {
+          type: "number",
+          description: "Current cart total in rupees (used to compute the discount amount)",
+        },
+      },
+      required: ["code", "cartTotal"],
+    },
+  },
+  {
+    name: "get_wishlist",
+    description:
+      "Retrieve the logged-in customer's wishlist — product names, prices, and stock status. Use this when a customer asks what's in their wishlist.",
+    input_schema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "add_to_wishlist",
+    description:
+      "Add a product to the logged-in customer's wishlist. Always confirm before calling. Use search_products or get_product_details first to get the productId.",
+    input_schema: {
+      type: "object",
+      properties: {
+        productId: {
+          type: "string",
+          description: "MongoDB _id of the product to wishlist",
+        },
+      },
+      required: ["productId"],
+    },
+  },
+  {
+    name: "initiate_return",
+    description:
+      "Submit a return/exchange/refund request for a delivered order on behalf of the customer. Only call this after confirming items and reason with the customer. Call check_order_status first.",
+    input_schema: {
+      type: "object",
+      properties: {
+        orderId: {
+          type: "string",
+          description: "The order ID to return",
+        },
+        items: {
+          type: "array",
+          description: "Array of items to return — each needs productId and quantity",
+          items: {
+            type: "object",
+            properties: {
+              productId: { type: "string" },
+              quantity: { type: "number" },
+              productName: { type: "string" },
+            },
+            required: ["productId", "quantity"],
+          },
+        },
+        reason: {
+          type: "string",
+          description: "Return reason: defective | wrong_item | not_as_described | size_mismatch | quality_issue | changed_mind | duplicate_order | other",
+        },
+        returnType: {
+          type: "string",
+          description: "Type: return | exchange | refund",
+        },
+        reasonDetails: {
+          type: "string",
+          description: "Optional additional details from the customer",
+        },
+      },
+      required: ["orderId", "items", "reason", "returnType"],
     },
   },
 ];
@@ -366,14 +486,197 @@ async function toolGetDeliveryEstimate({ pincode, isCustomizable }) {
   return estimateDelivery(String(pincode), mockProduct);
 }
 
+// ── Action tool executors ─────────────────────────────────────────────────────
+
+async function toolAddToCart({ productId, quantity = 1, colorName }, userId) {
+  if (!userId) return { error: "auth_required", message: "Please log in to add items to your cart." };
+
+  const product = await Product.findById(productId).select("name price stock trackInventory isActive colors compareAtPrice").lean();
+  if (!product || !product.isActive) return { success: false, message: "Product not found or unavailable." };
+
+  if (product.trackInventory && product.stock <= 0)
+    return { success: false, message: `Sorry, **${product.name}** is currently out of stock.` };
+
+  if (product.trackInventory) {
+    const existing = await Cart.findOne({ userId }).lean();
+    const inCart = existing?.items?.find((i) => i.productId.toString() === productId)?.quantity || 0;
+    if (inCart + quantity > product.stock)
+      return { success: false, message: `Only ${product.stock} unit(s) available${inCart ? ` and you already have ${inCart} in your cart` : ""}.` };
+  }
+
+  // Validate color if provided
+  if (colorName && product.colors?.length > 0) {
+    const match = product.colors.find((c) => c.name.toLowerCase() === colorName.toLowerCase() && c.visibleToUsers);
+    if (!match) return { success: false, message: `Color **${colorName}** is not available for this product.` };
+  }
+
+  let cart = await Cart.findOne({ userId });
+  if (!cart) {
+    cart = new Cart({ userId, items: [{ productId, quantity }] });
+  } else {
+    const idx = cart.items.findIndex((i) => i.productId.toString() === productId);
+    if (idx >= 0) {
+      cart.items[idx].quantity += quantity;
+    } else {
+      cart.items.push({ productId, quantity });
+    }
+  }
+  await cart.save();
+
+  const totalItems = cart.items.reduce((sum, i) => sum + i.quantity, 0);
+  return {
+    success: true,
+    action: "cart_updated",
+    message: `Added **${product.name}** (×${quantity}${colorName ? `, ${colorName}` : ""}) to your cart.`,
+    productName: product.name,
+    price: product.price,
+    cartItemCount: totalItems,
+  };
+}
+
+async function toolValidateCoupon({ code, cartTotal }) {
+  const coupon = await Coupon.findOne({
+    code: code.toUpperCase(),
+    isActive: true,
+    validFrom: { $lte: new Date() },
+    $or: [{ validUntil: { $gte: new Date() } }, { validUntil: null }],
+  }).lean();
+
+  if (!coupon) return { valid: false, message: "This coupon code is invalid or has expired." };
+  if (coupon.maxUses && coupon.useCount >= coupon.maxUses)
+    return { valid: false, message: "This coupon has reached its usage limit." };
+  if (coupon.minCartValue && cartTotal < coupon.minCartValue)
+    return { valid: false, message: `A minimum cart total of ₹${coupon.minCartValue} is required for this coupon.` };
+
+  let discount = 0;
+  if (coupon.discountType === "percentage") {
+    discount = (cartTotal * coupon.discountValue) / 100;
+    if (coupon.maxDiscount) discount = Math.min(discount, coupon.maxDiscount);
+  } else {
+    discount = Math.min(coupon.discountValue, cartTotal);
+  }
+  discount = Math.round(discount * 100) / 100;
+
+  return {
+    valid: true,
+    code: coupon.code,
+    discountType: coupon.discountType,
+    discountValue: coupon.discountValue,
+    discountAmount: discount,
+    finalTotal: Math.max(0, cartTotal - discount),
+    message: `Coupon **${coupon.code}** is valid! You save ₹${discount}.`,
+  };
+}
+
+async function toolGetWishlist(_, userId) {
+  if (!userId) return { error: "auth_required", message: "Please log in to view your wishlist." };
+
+  const user = await User.findById(userId).select("wishlist").populate({
+    path: "wishlist",
+    select: "name price stock isActive images image compareAtPrice",
+    match: { isActive: true },
+  }).lean();
+
+  if (!user?.wishlist?.length) return { found: true, items: [], message: "Your wishlist is empty." };
+
+  return {
+    found: true,
+    items: user.wishlist.map((p) => ({
+      productId: p._id,
+      name: p.name,
+      price: p.price,
+      compareAtPrice: p.compareAtPrice || null,
+      inStock: p.stock > 0,
+      imageUrl: p.images?.[0]?.url || p.image?.url || null,
+    })),
+    count: user.wishlist.length,
+  };
+}
+
+async function toolAddToWishlist({ productId }, userId) {
+  if (!userId) return { error: "auth_required", message: "Please log in to save items to your wishlist." };
+
+  const product = await Product.findById(productId).select("name isActive").lean();
+  if (!product || !product.isActive) return { success: false, message: "Product not found or unavailable." };
+
+  const user = await User.findById(userId).select("wishlist").lean();
+  const alreadySaved = user?.wishlist?.some((id) => id.toString() === productId);
+  if (alreadySaved) return { success: true, action: "wishlist_unchanged", message: `**${product.name}** is already in your wishlist.` };
+
+  await User.findByIdAndUpdate(userId, { $addToSet: { wishlist: productId } });
+
+  return {
+    success: true,
+    action: "wishlist_updated",
+    message: `Added **${product.name}** to your wishlist ♡`,
+    productName: product.name,
+  };
+}
+
+const VALID_REASONS = ["defective", "wrong_item", "not_as_described", "size_mismatch", "quality_issue", "changed_mind", "duplicate_order", "other"];
+const VALID_RETURN_TYPES = ["return", "exchange", "refund"];
+
+async function toolInitiateReturn({ orderId, items, reason, returnType, reasonDetails }, userId) {
+  if (!userId) return { error: "auth_required", message: "Please log in to initiate a return." };
+  if (!VALID_REASONS.includes(reason)) return { success: false, message: `Invalid reason. Choose one of: ${VALID_REASONS.join(", ")}` };
+  if (!VALID_RETURN_TYPES.includes(returnType)) return { success: false, message: `Invalid type. Choose: return, exchange, or refund.` };
+
+  const order = await Order.findById(orderId).lean();
+  if (!order) return { success: false, message: "Order not found." };
+  if (order.userId.toString() !== userId.toString()) return { success: false, message: "This order doesn't belong to your account." };
+  if (order.status !== "delivered") return { success: false, message: `Only delivered orders can be returned. This order is currently **${order.status}**.` };
+
+  const deliveredAt = order.deliveredAt || order.updatedAt;
+  const daysSince = Math.floor((Date.now() - new Date(deliveredAt)) / (1000 * 60 * 60 * 24));
+  if (daysSince > 3) return { success: false, message: "The 3-day return window for this order has passed." };
+
+  const existingRequest = await ReturnRequest.findOne({ orderId, userId }).lean();
+  if (existingRequest) return { success: false, message: "A return request already exists for this order." };
+
+  const returnItems = items.map((item) => ({
+    productId: item.productId,
+    productName: item.productName || "Product",
+    quantity: item.quantity,
+  }));
+
+  const returnRequest = new ReturnRequest({
+    orderId,
+    userId,
+    userEmail: order.shippingAddress?.email || "",
+    items: returnItems,
+    returnType,
+    reason,
+    reasonDetails: reasonDetails || "",
+    images: [],
+    status: "requested",
+  });
+  await returnRequest.save();
+
+  await Order.findByIdAndUpdate(orderId, {
+    hasReturnRequest: true,
+    returnRequestId: returnRequest._id,
+  });
+
+  return {
+    success: true,
+    returnRequestId: returnRequest._id,
+    message: `Your **${returnType}** request has been submitted successfully! Our team will review it within 24–48 hours. Request ID: ${returnRequest._id}`,
+  };
+}
+
 // ── Tool dispatcher ───────────────────────────────────────────────────────────
 async function executeTool(name, input, userId) {
   switch (name) {
-    case "search_products":      return toolSearchProducts(input);
-    case "get_product_details":  return toolGetProductDetails(input);
+    case "search_products":        return toolSearchProducts(input);
+    case "get_product_details":    return toolGetProductDetails(input);
     case "answer_policy_question": return toolAnswerPolicyQuestion(input, userId);
-    case "check_order_status":   return toolCheckOrderStatus(input, userId);
-    case "get_delivery_estimate": return toolGetDeliveryEstimate(input);
+    case "check_order_status":     return toolCheckOrderStatus(input, userId);
+    case "get_delivery_estimate":  return toolGetDeliveryEstimate(input);
+    case "add_to_cart":            return toolAddToCart(input, userId);
+    case "validate_coupon":        return toolValidateCoupon(input);
+    case "get_wishlist":           return toolGetWishlist(input, userId);
+    case "add_to_wishlist":        return toolAddToWishlist(input, userId);
+    case "initiate_return":        return toolInitiateReturn(input, userId);
     default: return { error: "unknown_tool", message: `Tool '${name}' not found.` };
   }
 }
@@ -466,6 +769,11 @@ async function handleChat(req, res) {
         }
 
         sendEvent("tool_end", { tool: block.name });
+
+        // Notify frontend to sync Redux state after action tools
+        if (result?.success && result?.action) {
+          sendEvent("action_done", { action: result.action });
+        }
 
         logMessages.push({
           role: "tool",
