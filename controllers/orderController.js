@@ -6,11 +6,65 @@ const User = require("../models/User");
 const { notifyCustomerStatusChange } = require("../services/whatsappService");
 
 const createOrder = async (req, res) => {
-  const { items } = req.body;
-  const userId = req.user._id;
-  const order = new Order({ userId, items });
-  await order.save();
-  res.json({ success: true, order });
+  try {
+    const { items, shippingAddress, discount } = req.body;
+    const userId = req.user._id;
+
+    // Batch-fetch all products in one query — never trust client-sent prices
+    const productIds = items.map((i) => i.product?._id || i.productId).filter(Boolean);
+    const dbProducts = await Product.find({ _id: { $in: productIds }, isActive: true }).lean();
+    const productMap = Object.fromEntries(dbProducts.map((p) => [String(p._id), p]));
+
+    const verifiedItems = [];
+    for (const item of items) {
+      const prodId = String(item.product?._id || item.productId);
+      const dbProduct = productMap[prodId];
+
+      if (!dbProduct) {
+        return res.status(400).json({
+          success: false,
+          error: `Product not found or unavailable: ${prodId}`,
+        });
+      }
+      if (dbProduct.stock < item.quantity) {
+        return res.status(400).json({
+          success: false,
+          error: `Insufficient stock for "${dbProduct.name}" (requested: ${item.quantity}, available: ${dbProduct.stock})`,
+        });
+      }
+
+      verifiedItems.push({
+        product: {
+          _id:         dbProduct._id,
+          name:        dbProduct.name,
+          price:       dbProduct.price,        // always use DB price
+          description: dbProduct.description || "",
+          category:    dbProduct.category,
+          subCategory: dbProduct.subCategory,
+        },
+        quantity:   item.quantity,
+        totalPrice: dbProduct.price * item.quantity,
+        variant:    item.variant || {},
+      });
+    }
+
+    const subtotal = verifiedItems.reduce((sum, i) => sum + i.totalPrice, 0);
+
+    const order = new Order({
+      userId,
+      items: verifiedItems,
+      subtotal,
+      totalAmount: subtotal,
+      shippingAddress,
+      ...(discount ? { discount } : {}),
+    });
+
+    await order.save();
+    res.status(201).json({ success: true, order });
+  } catch (error) {
+    console.error("Error creating order:", error);
+    res.status(500).json({ success: false, error: "Failed to create order" });
+  }
 };
 
 const getUserOrders = async (req, res) => {
@@ -156,7 +210,9 @@ const updateOrderStatus = async (req, res) => {
     try {
       const { pushOrderUpdate } = require("../routes/sse");
       pushOrderUpdate(order.userId.toString(), updatedOrder, oldStatus);
-    } catch {}
+    } catch (sseErr) {
+      console.error("[SSE] pushOrderUpdate failed:", sseErr.message);
+    }
 
     // WhatsApp notification to customer
     setImmediate(async () => {

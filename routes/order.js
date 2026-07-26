@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { protect, isAdmin } = require("../middlewares/authMiddleware");
+const { orderValidation } = require("../middlewares/validators");
 const {
   createOrder,
   getUserOrders,
@@ -8,7 +9,7 @@ const {
   updateOrderStatus,
 } = require("../controllers/orderController");
 
-router.post("/", createOrder);
+router.post("/", orderValidation, createOrder);
 router.get("/", getUserOrders);
 router.get("/:orderId", getOrderById);
 // updateOrderStatus should only be accessible to admins

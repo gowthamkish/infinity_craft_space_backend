@@ -41,16 +41,29 @@ console.log("CORS Allowed Origins:", allowedOrigins);
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" }, // allow Cloudinary images
-    contentSecurityPolicy: false, // managed separately if needed; avoid breaking CDN assets
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc:  ["'self'"],
+        scriptSrc:   ["'self'"],
+        styleSrc:    ["'self'", "'unsafe-inline'"],
+        imgSrc:      ["'self'", "data:", "https://res.cloudinary.com"],
+        connectSrc:  ["'self'", "https://api.razorpay.com", "https://checkout.razorpay.com"],
+        frameSrc:    ["https://api.razorpay.com", "https://checkout.razorpay.com"],
+        objectSrc:   ["'none'"],
+        upgradeInsecureRequests: [],
+      },
+    },
   }),
 );
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, Postman, curl requests)
+      // In development, allow requests with no origin (Postman, curl, etc.).
+      // In production, every legitimate browser request will have an Origin header.
       if (!origin) {
-        return callback(null, true);
+        if (process.env.NODE_ENV !== "production") return callback(null, true);
+        return callback(new Error("CORS: Origin header required in production"));
       }
 
       if (allowedOrigins.includes(origin)) {
@@ -82,8 +95,8 @@ app.use(
 // Add additional CORS headers middleware for APIs
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (!origin || allowedOrigins.includes(origin)) {
-    res.header("Access-Control-Allow-Origin", origin || "*");
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
     res.header("Access-Control-Allow-Credentials", "true");
     res.header(
       "Access-Control-Allow-Headers",
@@ -190,8 +203,6 @@ app.use(
   }),
 );
 
-// gowthamkish
-// gowthamkish93
 mongoose
   .connect(process.env.MONGO_URI, {
     maxPoolSize: 10,              // up from default 5; handles concurrent requests under load
