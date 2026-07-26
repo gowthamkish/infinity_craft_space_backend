@@ -72,6 +72,18 @@ const QnASchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+
+    // AI-generated draft answer (set by qnaAgentController)
+    aiDraftAnswer: {
+      content:    { type: String },
+      confidence: { type: Number },  // 0–1
+      sources:    [{ type: String }], // e.g. ["policy:returns", "qna:product123"]
+      generatedAt: { type: Date },
+      status: {
+        type: String,
+        enum: ["auto_posted", "pending_approval", "approved", "dismissed"],
+      },
+    },
   },
   { timestamps: true },
 );

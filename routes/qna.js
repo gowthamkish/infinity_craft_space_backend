@@ -4,6 +4,7 @@ const { protect, isAdmin } = require("../middlewares/authMiddleware");
 const QnA = require("../models/QnA");
 const Product = require("../models/Product");
 const { body, validationResult } = require("express-validator");
+const { runQnAAutoAnswerAgent } = require("../controllers/qnaAgentController");
 
 // Get Q&A for a product (public)
 router.get("/product/:productId", async (req, res) => {
@@ -89,6 +90,11 @@ router.post(
 
       await qna.save();
       await qna.populate("user", "username email");
+
+      // Fire-and-forget: AI auto-answer agent
+      runQnAAutoAnswerAgent(qna).catch((e) =>
+        console.error("[QnAAgent] Unhandled error:", e.message)
+      );
 
       res.status(201).json({
         success: true,
@@ -233,6 +239,83 @@ router.post("/:qnaId/pin", protect, isAdmin, async (req, res) => {
       error: "Failed to pin question",
       details: error.message,
     });
+  }
+});
+
+// Admin: Get Q&A pending AI draft approval
+router.get("/admin/drafts", protect, isAdmin, async (req, res) => {
+  try {
+    const { page = 1, limit = 20 } = req.query;
+    const safeLimit = Math.min(50, Math.max(1, parseInt(limit, 10) || 20));
+    const safePage  = Math.max(1, parseInt(page, 10) || 1);
+
+    const [items, total] = await Promise.all([
+      QnA.find({ "aiDraftAnswer.status": "pending_approval" })
+        .populate("product", "name images")
+        .populate("user", "username email")
+        .sort({ createdAt: -1 })
+        .skip((safePage - 1) * safeLimit)
+        .limit(safeLimit)
+        .lean(),
+      QnA.countDocuments({ "aiDraftAnswer.status": "pending_approval" }),
+    ]);
+
+    res.json({
+      success: true,
+      items,
+      pagination: { page: safePage, limit: safeLimit, total, pages: Math.ceil(total / safeLimit) },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin: Approve AI draft answer → post it as official answer
+router.post("/:qnaId/approve-ai-answer", protect, isAdmin, async (req, res) => {
+  try {
+    const { editedContent } = req.body; // admin can optionally edit before approving
+
+    const qna = await QnA.findById(req.params.qnaId);
+    if (!qna) return res.status(404).json({ success: false, error: "Question not found" });
+    if (!qna.aiDraftAnswer?.content) {
+      return res.status(400).json({ success: false, error: "No AI draft answer found" });
+    }
+    if (qna.aiDraftAnswer.status !== "pending_approval") {
+      return res.status(400).json({ success: false, error: "Draft has already been actioned" });
+    }
+
+    const finalContent = editedContent?.trim() || qna.aiDraftAnswer.content;
+
+    qna.answers.push({
+      user:             req.user._id,
+      userName:         "Aria (AI Assistant)",
+      content:          finalContent,
+      isSellerResponse: true,
+      createdAt:        new Date(),
+    });
+    qna.aiDraftAnswer.status = "approved";
+
+    await qna.save();
+    await qna.populate("answers.user", "username email");
+
+    res.json({ success: true, message: "AI answer approved and posted", data: qna });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin: Dismiss AI draft answer
+router.post("/:qnaId/dismiss-ai-answer", protect, isAdmin, async (req, res) => {
+  try {
+    const qna = await QnA.findByIdAndUpdate(
+      req.params.qnaId,
+      { "aiDraftAnswer.status": "dismissed" },
+      { new: true }
+    );
+    if (!qna) return res.status(404).json({ success: false, error: "Question not found" });
+    res.json({ success: true, message: "AI draft dismissed" });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

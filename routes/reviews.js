@@ -4,6 +4,7 @@ const Review = require("../models/Review");
 const Order = require("../models/Order");
 const { protect, isAdmin } = require("../middlewares/authMiddleware");
 const { uploadBase64Image, deleteImage } = require("../config/cloudinary");
+const { runReviewModerationAgent } = require("../controllers/reviewAgentController");
 
 // Get all reviews for a product (public)
 router.get("/product/:productId", async (req, res) => {
@@ -205,12 +206,17 @@ router.post("/", protect, async (req, res) => {
 
     await review.save();
 
+    // Fire-and-forget: run AI moderation agent asynchronously
+    runReviewModerationAgent(review).catch((e) =>
+      console.error("[ReviewAgent] Unhandled error:", e.message)
+    );
+
     // Populate user info before returning
     await review.populate("user", "username email");
 
     res.status(201).json({
       success: true,
-      message: "Review submitted successfully",
+      message: "Review submitted successfully. It will be visible once approved.",
       review,
     });
   } catch (err) {
@@ -454,6 +460,116 @@ router.post("/:reviewId/respond", protect, isAdmin, async (req, res) => {
     });
   }
 });
+
+// ── Admin: Moderation queue ───────────────────────────────────────────────────
+
+// GET /reviews/admin/queue — reviews pending moderation + reviews with draft responses
+router.get("/admin/queue", protect, isAdmin, async (req, res) => {
+  try {
+    const { tab = "pending", page = 1, limit = 20 } = req.query;
+    const safeLimit = Math.min(50, Math.max(1, parseInt(limit, 10) || 20));
+    const safePage  = Math.max(1, parseInt(page, 10) || 1);
+
+    let filter = {};
+    if (tab === "pending")  filter = { status: "pending" };
+    if (tab === "drafts")   filter = { "aiDraftResponse.status": "pending", status: "approved" };
+    if (tab === "flagged")  filter = { "aiModeration.verdict": { $in: ["suspicious", "spam"] } };
+    if (tab === "insights") filter = { productInsight: { $exists: true, $ne: null } };
+
+    const [reviews, total] = await Promise.all([
+      Review.find(filter)
+        .populate("product", "name images")
+        .populate("user", "username email")
+        .sort({ createdAt: -1 })
+        .skip((safePage - 1) * safeLimit)
+        .limit(safeLimit)
+        .lean(),
+      Review.countDocuments(filter),
+    ]);
+
+    res.json({
+      success: true,
+      reviews,
+      pagination: { page: safePage, limit: safeLimit, total, pages: Math.ceil(total / safeLimit) },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PUT /reviews/:reviewId/moderate — admin manually approve or reject a review
+router.put("/:reviewId/moderate", protect, isAdmin, async (req, res) => {
+  try {
+    const { action } = req.body; // "approve" | "reject"
+    if (!["approve", "reject"].includes(action)) {
+      return res.status(400).json({ success: false, error: "action must be 'approve' or 'reject'" });
+    }
+
+    const review = await Review.findByIdAndUpdate(
+      req.params.reviewId,
+      { status: action === "approve" ? "approved" : "rejected" },
+      { new: true }
+    ).populate("user", "username email").populate("product", "name");
+
+    if (!review) return res.status(404).json({ success: false, error: "Review not found" });
+
+    res.json({ success: true, review });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /reviews/:reviewId/approve-draft — admin approves the AI-drafted response and posts it live
+router.post("/:reviewId/approve-draft", protect, isAdmin, async (req, res) => {
+  try {
+    const { editedComment } = req.body; // optional: admin can edit before approving
+
+    const review = await Review.findById(req.params.reviewId);
+    if (!review) return res.status(404).json({ success: false, error: "Review not found" });
+    if (!review.aiDraftResponse?.comment) {
+      return res.status(400).json({ success: false, error: "No AI draft response found" });
+    }
+    if (review.aiDraftResponse.status !== "pending") {
+      return res.status(400).json({ success: false, error: "Draft has already been actioned" });
+    }
+
+    const finalComment = editedComment?.trim() || review.aiDraftResponse.comment;
+
+    review.adminResponse = {
+      comment:       finalComment,
+      respondedAt:   new Date(),
+      respondedBy:   req.user._id,
+    };
+    review.aiDraftResponse.status     = "approved";
+    review.aiDraftResponse.approvedAt = new Date();
+    review.aiDraftResponse.approvedBy = req.user._id;
+
+    await review.save();
+    await review.populate("user", "username email");
+    await review.populate("adminResponse.respondedBy", "username");
+
+    res.json({ success: true, message: "Draft approved and posted", review });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /reviews/:reviewId/dismiss-draft — admin dismisses the AI draft without posting
+router.post("/:reviewId/dismiss-draft", protect, isAdmin, async (req, res) => {
+  try {
+    const review = await Review.findByIdAndUpdate(
+      req.params.reviewId,
+      { "aiDraftResponse.status": "dismissed" },
+      { new: true }
+    );
+    if (!review) return res.status(404).json({ success: false, error: "Review not found" });
+    res.json({ success: true, message: "Draft dismissed" });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── User: Get own reviews ─────────────────────────────────────────────────────
 
 // Get user's reviews (authenticated)
 router.get("/my-reviews", protect, async (req, res) => {

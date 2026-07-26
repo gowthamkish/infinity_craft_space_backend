@@ -64,8 +64,32 @@ const ReviewSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ["pending", "approved", "rejected"],
-    default: "approved", // Auto-approve for now, can add moderation later
+    default: "pending", // Agent decides; falls back to approved if agent errors
   },
+
+  // AI moderation result (set by reviewAgentController)
+  aiModeration: {
+    verdict:     { type: String, enum: ["genuine", "suspicious", "spam"] },
+    reason:      { type: String },
+    confidence:  { type: Number },
+    processedAt: { type: Date },
+  },
+
+  // AI-drafted response for 1–3 star reviews (admin must approve before it goes live)
+  aiDraftResponse: {
+    comment:      { type: String },
+    generatedAt:  { type: Date },
+    approvedAt:   { type: Date },
+    approvedBy:   { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    status: {
+      type: String,
+      enum: ["pending", "approved", "dismissed"],
+      default: "pending",
+    },
+  },
+
+  // Repeated-complaint insight surfaced by the agent (stored for admin context)
+  productInsight: { type: String },
   createdAt: {
     type: Date,
     default: Date.now,
