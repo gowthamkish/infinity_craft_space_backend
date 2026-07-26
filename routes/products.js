@@ -195,8 +195,10 @@ router.post("/", protect, isAdmin, productValidation, async (req, res) => {
     // Create product
     const productData = {
       name,
+      sku: req.body.sku || undefined,
       description,
       price: parseFloat(price),
+      compareAtPrice: req.body.compareAtPrice ? parseFloat(req.body.compareAtPrice) : null,
       category,
       subCategory,
       // Stock/Inventory fields
@@ -456,8 +458,11 @@ router.put("/:id", protect, isAdmin, async (req, res) => {
 
     // Update basic fields
     if (name) updateData.name = name;
+    if (req.body.sku !== undefined) updateData.sku = req.body.sku || null;
     if (description !== undefined) updateData.description = description;
     if (price) updateData.price = parseFloat(price);
+    if (req.body.compareAtPrice !== undefined)
+      updateData.compareAtPrice = req.body.compareAtPrice ? parseFloat(req.body.compareAtPrice) : null;
     if (category) updateData.category = category;
     if (subCategory) updateData.subCategory = subCategory;
 

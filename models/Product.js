@@ -52,10 +52,12 @@ const BulkDiscountSchema = new mongoose.Schema(
 
 const ProductSchema = new mongoose.Schema({
   name: { type: String, required: true },
+  sku: { type: String, trim: true },
   // SEO-friendly slug: auto-generated from name if not provided
   // e.g. "Handmade Resin Coaster Set" → "handmade-resin-coaster-set"
   slug: { type: String, trim: true },
   price: { type: Number, required: true },
+  compareAtPrice: { type: Number, default: null },
   description: { type: String },
   category: { type: String, required: true },
   subCategory: { type: String, required: true },
