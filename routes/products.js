@@ -230,6 +230,10 @@ router.post("/", protect, isAdmin, productValidation, async (req, res) => {
             sortOrder:      c.sortOrder !== undefined ? parseInt(c.sortOrder) : i,
           }))
         : [],
+      showHoopSizePicker: req.body.showHoopSizePicker === true || req.body.showHoopSizePicker === "true",
+      hoopSizes: Array.isArray(req.body.hoopSizes)
+        ? req.body.hoopSizes.map(Number).filter((n) => [6, 8, 10, 12].includes(n))
+        : [],
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -485,6 +489,10 @@ router.put("/:id", protect, isAdmin, async (req, res) => {
       updateData.processingDaysMax = parseInt(req.body.processingDaysMax);
     if (req.body.showColorPickerToUsers !== undefined)
       updateData.showColorPickerToUsers = req.body.showColorPickerToUsers === true || req.body.showColorPickerToUsers === "true";
+    if (req.body.showHoopSizePicker !== undefined)
+      updateData.showHoopSizePicker = req.body.showHoopSizePicker === true || req.body.showHoopSizePicker === "true";
+    if (Array.isArray(req.body.hoopSizes))
+      updateData.hoopSizes = req.body.hoopSizes.map(Number).filter((n) => [6, 8, 10, 12].includes(n));
     if (Array.isArray(req.body.colors))
       updateData.colors = req.body.colors.map((c, i) => ({
         name:           String(c.name || "").slice(0, 30),
