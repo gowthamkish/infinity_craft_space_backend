@@ -103,6 +103,10 @@ const ProductSchema = new mongoose.Schema({
   variantTypes: [String], // ['color', 'size', 'material']
   variants: [VariantSchema],
 
+  // Hoop size variants (Embroidery Hoop category)
+  showHoopSizePicker: { type: Boolean, default: false },
+  hoopSizes: { type: [Number], default: [] }, // available inch sizes e.g. [6, 8, 10, 12]
+
   // Color variants
   showColorPickerToUsers: { type: Boolean, default: false },
   colors: [
