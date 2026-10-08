@@ -203,14 +203,29 @@ app.use(
   }),
 );
 
-mongoose
-  .connect(process.env.MONGO_URI, {
-    maxPoolSize: 10,              // up from default 5; handles concurrent requests under load
-    serverSelectionTimeoutMS: 5000, // fail fast if Atlas is unreachable
-    socketTimeoutMS: 45000,        // drop idle sockets after 45s
-  })
-  .then(() => console.log("MongoDB connected"))
-  .catch((err) => console.error(err));
+// Mongoose does not retry a failed *initial* connection, so without this the
+// server keeps running with no DB and every query times out while buffering.
+const connectWithRetry = (attempt = 1) => {
+  mongoose
+    .connect(process.env.MONGO_URI, {
+      maxPoolSize: 10,              // up from default 5; handles concurrent requests under load
+      serverSelectionTimeoutMS: 5000, // fail fast if Atlas is unreachable
+      socketTimeoutMS: 45000,        // drop idle sockets after 45s
+    })
+    .then(() => console.log("MongoDB connected"))
+    .catch((err) => {
+      const delay = Math.min(30000, 2000 * attempt);
+      console.error(
+        `MongoDB connection failed (attempt ${attempt}): ${err.message}. ` +
+          `Check Atlas Network Access allows this IP. Retrying in ${delay / 1000}s...`,
+      );
+      setTimeout(() => connectWithRetry(attempt + 1), delay);
+    });
+};
+connectWithRetry();
+
+mongoose.connection.on("disconnected", () => console.warn("MongoDB disconnected"));
+mongoose.connection.on("reconnected", () => console.log("MongoDB reconnected"));
 
 app.use("/api/auth", authRoutes);
 app.use("/api/auth", passwordResetRoutes);
