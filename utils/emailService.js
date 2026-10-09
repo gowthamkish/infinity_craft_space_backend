@@ -101,7 +101,7 @@ const emailTemplates = {
         </ul>
 
         <p style="margin: 20px 0;">
-          <a href="${recoveryLink}" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
+          <a href="${recoveryLink}" style="background: #e8623d; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
             Complete Your Purchase
           </a>
         </p>
@@ -122,7 +122,7 @@ const emailTemplates = {
         <p>Your review helps other customers make informed decisions.</p>
         
         <p style="margin: 20px 0;">
-          <a href="${process.env.FRONTEND_URL}/products/${order.items[0].product._id}?tab=reviews" style="background: #10b981; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
+          <a href="${process.env.FRONTEND_URL}/products/${order.items[0].product._id}?tab=reviews" style="background: #0f9488; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
             Write a Review
           </a>
         </p>
@@ -234,13 +234,40 @@ exports.sendStockAlertEmail = async (email, product) => {
           ${product.price ? `<p>Price: ₹${product.price}</p>` : ""}
         </div>
         <p style="margin: 20px 0;">
-          <a href="${frontendUrl}/product/${product._id}" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
+          <a href="${frontendUrl}/product/${product._id}" style="background: #e8623d; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
             Shop Now
           </a>
         </p>
         <p style="color: #666; font-size: 12px;">
           Stock is limited — grab yours before it sells out again!
         </p>
+      </div>
+    `,
+  };
+  return exports.sendEmail(email, template);
+};
+
+exports.sendNewsletterWelcome = async (email, unsubscribeUrl) => {
+  const frontendUrl = process.env.FRONTEND_URL || "https://www.infinitycraftspace.com";
+  const template = {
+    subject: "Welcome to InfinityCraftSpace ✨",
+    html: `
+      <div style="background:#f7f4ee;padding:32px 16px;font-family:Inter,Arial,sans-serif;color:#232420;">
+        <div style="max-width:560px;margin:0 auto;background:#fffdf9;border:1px solid #e4dfd6;border-radius:20px;padding:36px 32px;">
+          <h2 style="margin:0 0 12px;font-size:24px;">Welcome to the community 🎉</h2>
+          <p style="color:#5b5d58;line-height:1.6;margin:0 0 20px;">
+            Thanks for subscribing! You'll be the first to hear about new handcrafted collections,
+            festive launches and subscriber-only offers.
+          </p>
+          <p style="margin:0 0 28px;">
+            <a href="${frontendUrl}/products" style="background:#d24e33;color:#fff;padding:12px 24px;text-decoration:none;border-radius:12px;display:inline-block;font-weight:600;">
+              Explore the collection
+            </a>
+          </p>
+          <p style="color:#8a8c85;font-size:12px;margin:0;">
+            Changed your mind? <a href="${unsubscribeUrl}" style="color:#8a8c85;">Unsubscribe in one click</a>.
+          </p>
+        </div>
       </div>
     `,
   };

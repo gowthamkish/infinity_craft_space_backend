@@ -94,6 +94,19 @@ const verifyAnswersLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Newsletter sign-up limiter — 5 attempts per hour per IP (stops list-bombing / email abuse)
+const newsletterLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  message: {
+    success: false,
+    error: "Too many sign-up attempts. Please try again in an hour.",
+    retryAfter: "1 hour",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Chat/AI limiter — each request costs money, cap at 20 messages per 10 min per IP
 const chatLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
@@ -116,4 +129,5 @@ module.exports = {
   verifyAnswersLimiter,
   strictLimiter,
   chatLimiter,
+  newsletterLimiter,
 };

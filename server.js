@@ -241,6 +241,7 @@ app.use("/api/cart", protect, require("./routes/cart"));
 app.use("/api/payment", strictLimiter, require("./routes/payment")); // Strict limiting for payments
 app.use("/api/reviews", require("./routes/reviews"));
 app.use("/api/coupons", require("./routes/coupons"));
+app.use("/api/newsletter", require("./routes/newsletter"));
 app.use("/api/qna", require("./routes/qna"));
 app.use("/api/returns", require("./routes/returns"));
 // Shiprocket shipping integration (webhook is public, rest is protected inside the router)
