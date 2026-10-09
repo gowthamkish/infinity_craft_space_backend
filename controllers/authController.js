@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
-const { generateTokens, setAuthCookies, clearAuthCookies } = require("../middlewares/authMiddleware");
+const { issueTokens, revokeRefreshToken, setAuthCookies, clearAuthCookies } = require("../middlewares/authMiddleware");
 
 const { SECURITY_QUESTIONS } = require("../utils/securityQuestions");
 
@@ -58,7 +58,7 @@ const register = async (req, res) => {
     });
     await newUser.save();
 
-    const tokens = generateTokens(newUser._id);
+    const tokens = await issueTokens(newUser._id);
     setAuthCookies(res, tokens);
 
     res.status(201).json({
@@ -123,7 +123,7 @@ const login = async (req, res) => {
       await user.save();
     }
 
-    const tokens = generateTokens(user._id);
+    const tokens = await issueTokens(user._id);
     setAuthCookies(res, tokens);
 
     res.json({
@@ -141,7 +141,13 @@ const login = async (req, res) => {
   }
 };
 
-const logout = (req, res) => {
+const logout = async (req, res) => {
+  // Revoke server-side so the refresh token can't be replayed after logout
+  try {
+    await revokeRefreshToken(req.cookies?.refreshToken);
+  } catch (err) {
+    console.error("Logout revoke error:", err.message);
+  }
   clearAuthCookies(res);
   res.json({ message: "Logged out successfully" });
 };

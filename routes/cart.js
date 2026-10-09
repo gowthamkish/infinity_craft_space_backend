@@ -1,12 +1,24 @@
 const express = require("express");
+const mongoose = require("mongoose");
 const Cart = require("../models/Cart");
 const Product = require("../models/Product");
 const router = express.Router();
 
+// SECURITY: the cart owner is ALWAYS the logged-in user (req.user, set by `protect`
+// in server.js). A userId in the URL or body is never trusted — it used to be, which
+// let any user read, clear or modify anyone else's cart.
+const ownerId = (req) => String(req.user._id);
+// "/me" is what the frontend calls; an explicit id is only accepted if it is the caller's own.
+const isOwnParam = (req) => req.params.userId === "me" || req.params.userId === ownerId(req);
+const parseQty = (q) => (Number.isInteger(Number(q)) && Number(q) >= 1 && Number(q) <= 100 ? Number(q) : null);
+
 // Get user's cart with populated product details
 router.get("/:userId", async (req, res) => {
   try {
-    const { userId } = req.params;
+    if (!isOwnParam(req)) {
+      return res.status(403).json({ success: false, error: "Access denied" });
+    }
+    const userId = ownerId(req);
 
     const cart = await Cart.findOne({ userId }).populate({
       path: "items.productId",
@@ -59,15 +71,20 @@ router.get("/:userId", async (req, res) => {
 //     This avoids the "second tab silently discards first tab's items" bug.
 router.post("/sync", async (req, res) => {
   try {
-    const { userId, items, clientUpdatedAt } = req.body;
+    const userId = ownerId(req);
+    const { items, clientUpdatedAt } = req.body;
 
-    if (!userId) {
-      return res.status(400).json({ success: false, error: "User ID is required" });
+    if (items != null && !Array.isArray(items)) {
+      return res.status(400).json({ success: false, error: "items must be an array" });
     }
 
-    const incomingMap = new Map(
-      (items || []).map((item) => [item.product._id.toString(), item.quantity])
-    );
+    // Skip malformed lines and clamp quantities instead of throwing a 500
+    const incomingMap = new Map();
+    for (const item of items || []) {
+      const pid = item?.product?._id;
+      const qty = parseQty(item?.quantity);
+      if (pid && qty) incomingMap.set(String(pid), qty);
+    }
 
     let cart = await Cart.findOne({ userId });
 
@@ -143,8 +160,10 @@ router.post("/sync", async (req, res) => {
 // Clear user's cart
 router.delete("/:userId", async (req, res) => {
   try {
-    const { userId } = req.params;
-    await Cart.findOneAndUpdate({ userId }, { items: [] });
+    if (!isOwnParam(req)) {
+      return res.status(403).json({ success: false, error: "Access denied" });
+    }
+    await Cart.findOneAndUpdate({ userId: ownerId(req) }, { items: [] });
     res.json({ success: true, message: "Cart cleared" });
   } catch (error) {
     console.error("Clear cart error:", error);
@@ -158,7 +177,12 @@ router.delete("/:userId", async (req, res) => {
 // Add to cart with stock validation
 router.post("/add", async (req, res) => {
   try {
-    const { userId, productId, quantity } = req.body;
+    const userId = ownerId(req);
+    const { productId } = req.body;
+    const quantity = req.body.quantity === undefined ? 1 : parseQty(req.body.quantity);
+    if (!mongoose.Types.ObjectId.isValid(String(productId)) || !quantity) {
+      return res.status(400).json({ success: false, error: "Valid productId and quantity are required" });
+    }
 
     // Check product stock
     const product = await Product.findById(productId);

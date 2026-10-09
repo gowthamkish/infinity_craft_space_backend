@@ -193,6 +193,10 @@ app.use(
   express.json({
     limit: "50mb", // Increase JSON payload limit
     extended: true,
+    // Razorpay signs the exact raw bytes of the webhook body, so keep them.
+    verify: (req, _res, buf) => {
+      if (req.originalUrl.startsWith("/api/payment/webhook")) req.rawBody = buf;
+    },
   }),
 );
 app.use(

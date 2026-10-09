@@ -77,6 +77,15 @@ const userSchema = new mongoose.Schema({
   // JWTs issued before this timestamp are rejected by the protect middleware.
   passwordChangedAt: { type: Date },
 
+  // ── Active refresh tokens (server-side allow-list → real logout / revocation) ──
+  // Only SHA-256 hashes are stored. A refresh JWT is honoured only while its hash is here,
+  // and every refresh consumes the old hash and stores a new one (rotation).
+  refreshTokens: {
+    type: [{ hash: { type: String, required: true }, expiresAt: { type: Date, required: true }, _id: false }],
+    default: [],
+    select: false,
+  },
+
   // ── Previous password hash (reuse prevention) ─────────────────────────────
   previousPasswordHash: { type: String, select: false },
 });
@@ -100,6 +109,7 @@ userSchema.pre("save", function (next) {
 });
 
 userSchema.index({ role: 1 });
+userSchema.index({ "refreshTokens.hash": 1 }, { sparse: true });
 // Sparse indexes for O(1) token lookups
 userSchema.index({ verificationToken: 1 }, { sparse: true });
 userSchema.index({ resetToken: 1 }, { sparse: true });

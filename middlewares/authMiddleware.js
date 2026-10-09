@@ -1,5 +1,10 @@
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const User = require("../models/User");
+
+const MAX_SESSIONS_PER_USER = 5; // oldest refresh token is dropped beyond this
+
+const hashToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
 
 // JWT token expiry settings
 const ACCESS_TOKEN_EXPIRY = "2h"; // 2 hours — 15m was too short for mobile (refresh cycle caused logout)
@@ -18,7 +23,7 @@ const generateRefreshToken = (userId) => {
     throw new Error("JWT_REFRESH_SECRET must be set separately from JWT_SECRET");
   }
   return jwt.sign(
-    { id: userId, type: "refresh" },
+    { id: userId, type: "refresh", jti: crypto.randomBytes(16).toString("hex") },
     process.env.JWT_REFRESH_SECRET,
     { expiresIn: REFRESH_TOKEN_EXPIRY },
   );
@@ -30,6 +35,33 @@ const generateTokens = (userId) => {
     accessToken: generateAccessToken(userId),
     refreshToken: generateRefreshToken(userId),
   };
+};
+
+// Issue a token pair AND register the refresh token server-side.
+// Use this (not bare generateTokens) anywhere a session is created or rotated.
+const issueTokens = async (userId) => {
+  const tokens = generateTokens(userId);
+  const { exp } = jwt.decode(tokens.refreshToken);
+  // $pull expired entries first; $push + $slice can't share an update with $pull on the same field
+  await User.updateOne({ _id: userId }, { $pull: { refreshTokens: { expiresAt: { $lte: new Date() } } } });
+  await User.updateOne(
+    { _id: userId },
+    {
+      $push: {
+        refreshTokens: {
+          $each: [{ hash: hashToken(tokens.refreshToken), expiresAt: new Date(exp * 1000) }],
+          $slice: -MAX_SESSIONS_PER_USER,
+        },
+      },
+    },
+  );
+  return tokens;
+};
+
+// Revoke one refresh token (logout of this device)
+const revokeRefreshToken = async (token) => {
+  if (!token) return;
+  await User.updateOne({ "refreshTokens.hash": hashToken(token) }, { $pull: { refreshTokens: { hash: hashToken(token) } } });
 };
 
 const protect = async (req, res, next) => {
@@ -142,14 +174,29 @@ const refreshAccessToken = async (req, res) => {
       return res.status(401).json({ error: "Invalid token type" });
     }
 
-    // Verify user still exists
-    const user = await User.findById(decoded.id).select("-password");
+    // Atomically CONSUME this token: it only matches if its hash is still on the user's
+    // allow-list, and the $pull removes it in the same operation. So a revoked (logged-out)
+    // token, or one that was already rotated, is rejected — and two parallel requests can't
+    // both succeed with the same token.
+    const hash = hashToken(refreshToken);
+    const user = await User.findOneAndUpdate(
+      { _id: decoded.id, "refreshTokens.hash": hash },
+      { $pull: { refreshTokens: { hash } } },
+      { new: true },
+    ).select("-password");
     if (!user) {
-      return res.status(401).json({ error: "User not found" });
+      clearAuthCookies(res);
+      return res.status(401).json({ error: "Invalid refresh token" });
     }
 
-    // Generate new tokens (rotation)
-    const tokens = generateTokens(user._id);
+    // A password change invalidates refresh tokens issued before it
+    if (user.passwordChangedAt && decoded.iat < Math.floor(user.passwordChangedAt.getTime() / 1000)) {
+      clearAuthCookies(res);
+      return res.status(401).json({ error: "Session expired, please login again", code: "PASSWORD_CHANGED" });
+    }
+
+    // Generate new tokens (rotation) and register the new refresh token
+    const tokens = await issueTokens(user._id);
 
     // Set new httpOnly cookies
     setAuthCookies(res, tokens);
@@ -213,6 +260,8 @@ module.exports = {
   generateAccessToken,
   generateRefreshToken,
   generateTokens,
+  issueTokens,
+  revokeRefreshToken,
   refreshAccessToken,
   setAuthCookies,
   clearAuthCookies,

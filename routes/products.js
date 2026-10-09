@@ -32,7 +32,7 @@ router.get("/personalized/recommendations", protect, getPersonalized);
 router.get("/:id", getProduct);
 router.delete("/:id", protect, isAdmin, deleteProduct);
 router.post("/check-stock", checkStock);
-router.post("/update-stock", protect, updateStock);
+router.post("/update-stock", protect, isAdmin, updateStock);
 router.get("/:id/recommendations", getRecommendations);
 router.get("/:id/bought-together", getBoughtTogetherProducts);
 

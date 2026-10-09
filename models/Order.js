@@ -154,6 +154,11 @@ OrderSchema.index({ userId: 1, status: 1 });
 OrderSchema.index({ status: 1, createdAt: -1 });
 OrderSchema.index({ paymentStatus: 1, createdAt: -1 });
 OrderSchema.index({ razorpayOrderId: 1 });
+// One Razorpay payment can only ever confirm one order
+OrderSchema.index(
+  { razorpayPaymentId: 1 },
+  { unique: true, partialFilterExpression: { razorpayPaymentId: { $type: "string" } } },
+);
 OrderSchema.index({ "shiprocket.awbCode": 1 });
 OrderSchema.index({ "shiprocket.shipmentId": 1 });
 OrderSchema.index({ createdAt: -1 }); // Admin date-range scans

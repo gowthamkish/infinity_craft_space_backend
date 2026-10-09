@@ -277,6 +277,7 @@ const resetPassword = async (req, res) => {
           passwordChangedAt: new Date(),        // invalidates all existing JWTs
           loginAttempts: 0,
           lockUntil: null,
+          refreshTokens: [], // sign out every device
         },
         $unset: {
           resetToken: "",
