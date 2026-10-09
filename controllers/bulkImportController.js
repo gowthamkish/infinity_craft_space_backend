@@ -71,7 +71,7 @@ async function bulkImport(req, res) {
   const created = [];
   const failed  = [];
 
-  for (let i = 0; i < rows.length; i++) {
+  const importRow = async (i) => {
     const row = rows[i];
     const rowNum = i + 1;
 
@@ -80,9 +80,9 @@ async function bulkImport(req, res) {
       const category = String(row.category || "").trim();
       const price    = parseFloat(row.price);
 
-      if (!name)           { failed.push({ row: rowNum, name, error: "Name is required" }); continue; }
-      if (!category)       { failed.push({ row: rowNum, name, error: "Category is required" }); continue; }
-      if (isNaN(price) || price <= 0) { failed.push({ row: rowNum, name, error: "Valid price is required" }); continue; }
+      if (!name)           { failed.push({ row: rowNum, name, error: "Name is required" }); return; }
+      if (!category)       { failed.push({ row: rowNum, name, error: "Category is required" }); return; }
+      if (isNaN(price) || price <= 0) { failed.push({ row: rowNum, name, error: "Valid price is required" }); return; }
 
       const productData = {
         name,
@@ -120,7 +120,24 @@ async function bulkImport(req, res) {
         : err.message;
       failed.push({ row: rowNum, name, error: msg });
     }
-  }
+  };
+
+  // Bounded worker pool: save up to IMPORT_CONCURRENCY rows in parallel instead
+  // of strictly one-by-one (500 sequential round-trips). Each save still runs
+  // its own hooks (slug, embedding), and the cap keeps the DB pool and the
+  // embedding API from being flooded.
+  const IMPORT_CONCURRENCY = 8;
+  let next = 0;
+  const worker = async () => {
+    while (next < rows.length) await importRow(next++);
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(IMPORT_CONCURRENCY, rows.length) }, worker),
+  );
+
+  // Workers finish out of order — restore row order for the response
+  created.sort((a, b) => a.row - b.row);
+  failed.sort((a, b) => a.row - b.row);
 
   res.json({
     success: true,

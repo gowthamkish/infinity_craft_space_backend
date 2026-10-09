@@ -85,7 +85,13 @@ router.patch("/:id/restock", protect, isAdmin, async (req, res) => {
 
           for (const alert of alerts) {
             enqueueEmail(() => sendStockAlertEmail(alert.email, updated));
-            await StockAlert.findByIdAndUpdate(alert._id, { notifiedAt: new Date() });
+          }
+          // Mark all as notified in a single query instead of one update per subscriber
+          if (alerts.length > 0) {
+            await StockAlert.updateMany(
+              { _id: { $in: alerts.map((a) => a._id) } },
+              { $set: { notifiedAt: new Date() } },
+            );
           }
 
           if (alerts.length > 0) {

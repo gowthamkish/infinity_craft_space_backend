@@ -89,13 +89,18 @@ router.post("/cancel/:orderId", protect, async (req, res) => {
       });
     }
 
-    // Restore product stock
-    for (const item of order.items) {
-      if (item.product?._id) {
-        await Product.findByIdAndUpdate(item.product._id, {
-          $inc: { stock: item.quantity },
-        }).catch(() => {});
-      }
+    // Restore product stock — one bulkWrite round-trip instead of one query per item.
+    // ordered:false so one bad item doesn't block the rest (matches old per-item catch).
+    const restockOps = order.items
+      .filter((item) => item.product?._id)
+      .map((item) => ({
+        updateOne: {
+          filter: { _id: item.product._id },
+          update: { $inc: { stock: item.quantity } },
+        },
+      }));
+    if (restockOps.length) {
+      await Product.bulkWrite(restockOps, { ordered: false }).catch(() => {});
     }
 
     order.status = "cancelled";

@@ -7,6 +7,36 @@ const { uploadBase64Image, deleteImage } = require("../config/cloudinary");
 const { runReviewModerationAgent } = require("../controllers/reviewAgentController");
 
 // Get all reviews for a product (public)
+
+// Upload review images to Cloudinary in parallel (max 5) while preserving the
+// user's order. Failed uploads are logged and skipped, as before.
+async function uploadReviewImages(imagesToUpload) {
+  const results = await Promise.allSettled(
+    imagesToUpload.map((imageData) => uploadBase64Image(imageData.base64, "reviews")),
+  );
+  const uploaded = [];
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") {
+      uploaded.push({
+        url: r.value.secure_url,
+        publicId: r.value.public_id,
+        originalName: imagesToUpload[i].name || "review-image",
+      });
+    } else {
+      console.error("Error uploading review image:", r.reason);
+    }
+  });
+  return uploaded;
+}
+
+// Delete Cloudinary images in parallel; failures are logged, never thrown.
+async function deleteReviewImages(publicIds) {
+  const results = await Promise.allSettled(publicIds.map((id) => deleteImage(id)));
+  results.forEach((r) => {
+    if (r.status === "rejected") console.error("Error deleting image:", r.reason);
+  });
+}
+
 router.get("/product/:productId", async (req, res) => {
   try {
     const { productId } = req.params;
@@ -179,19 +209,8 @@ router.post("/", protect, async (req, res) => {
       const maxImages = 5; // Limit to 5 images per review
       const imagesToUpload = images.slice(0, maxImages);
 
-      for (const imageData of imagesToUpload) {
-        try {
-          const result = await uploadBase64Image(imageData.base64, "reviews");
-          uploadedImages.push({
-            url: result.secure_url,
-            publicId: result.public_id,
-            originalName: imageData.name || "review-image",
-          });
-        } catch (uploadError) {
-          console.error("Error uploading review image:", uploadError);
-          // Continue with other images even if one fails
-        }
-      }
+      // Continue with other images even if one fails
+      uploadedImages = await uploadReviewImages(imagesToUpload);
     }
 
     const review = new Review({
@@ -263,17 +282,10 @@ router.put("/:reviewId", protect, async (req, res) => {
 
     // Delete specified images from Cloudinary
     if (imagesToDelete && imagesToDelete.length > 0) {
-      for (const publicId of imagesToDelete) {
-        try {
-          await deleteImage(publicId);
-        } catch (deleteError) {
-          console.error("Error deleting image:", deleteError);
-        }
-      }
-      // Remove deleted images from review
-      review.images = review.images.filter(
-        (img) => !imagesToDelete.includes(img.publicId),
-      );
+      await deleteReviewImages(imagesToDelete);
+      // Remove deleted images from review (Set → O(1) membership per image)
+      const deleteSet = new Set(imagesToDelete);
+      review.images = review.images.filter((img) => !deleteSet.has(img.publicId));
     }
 
     // Upload new images if provided
@@ -282,18 +294,7 @@ router.put("/:reviewId", protect, async (req, res) => {
       const maxNewImages = 5 - currentImageCount;
       const imagesToUpload = images.slice(0, maxNewImages);
 
-      for (const imageData of imagesToUpload) {
-        try {
-          const result = await uploadBase64Image(imageData.base64, "reviews");
-          review.images.push({
-            url: result.secure_url,
-            publicId: result.public_id,
-            originalName: imageData.name || "review-image",
-          });
-        } catch (uploadError) {
-          console.error("Error uploading review image:", uploadError);
-        }
-      }
+      review.images.push(...(await uploadReviewImages(imagesToUpload)));
     }
 
     // Update review fields
@@ -344,13 +345,7 @@ router.delete("/:reviewId", protect, async (req, res) => {
 
     // Delete images from Cloudinary
     if (review.images && review.images.length > 0) {
-      for (const image of review.images) {
-        try {
-          await deleteImage(image.publicId);
-        } catch (deleteError) {
-          console.error("Error deleting image:", deleteError);
-        }
-      }
+      await deleteReviewImages(review.images.map((image) => image.publicId));
     }
 
     await Review.findByIdAndDelete(reviewId);

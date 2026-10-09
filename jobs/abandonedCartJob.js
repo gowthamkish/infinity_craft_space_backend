@@ -38,6 +38,7 @@ module.exports = async function abandonedCartJob() {
 
     console.log(`[AbandonedCartJob] Found ${carts.length} carts to remind`);
 
+    const reminderOps = [];
     for (const cart of carts) {
       const token = crypto.randomBytes(16).toString("hex");
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -53,13 +54,25 @@ module.exports = async function abandonedCartJob() {
 
       enqueueEmail(() => sendAbandonedCartReminder(user, cartItems, recoveryLink));
 
-      await AbandonedCart.findByIdAndUpdate(cart._id, {
-        reminderSent: true,
-        $inc: { remindersCount: 1 },
-        lastReminderAt: new Date(),
-        "recoveryLink.token": token,
-        "recoveryLink.expiresAt": expiresAt,
+      reminderOps.push({
+        updateOne: {
+          filter: { _id: cart._id },
+          update: {
+            $set: {
+              reminderSent: true,
+              lastReminderAt: new Date(),
+              "recoveryLink.token": token,
+              "recoveryLink.expiresAt": expiresAt,
+            },
+            $inc: { remindersCount: 1 },
+          },
+        },
       });
+    }
+
+    // One bulkWrite round-trip instead of up to 200 sequential updates
+    if (reminderOps.length) {
+      await AbandonedCart.bulkWrite(reminderOps, { ordered: false });
     }
 
     console.log(`[AbandonedCartJob] Queued ${carts.length} reminder emails`);

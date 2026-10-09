@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  *  - Validate Indian pincodes
- *  - Resolve pincode → state → zone (with in-memory cache)
+ *  - Resolve pincode → state → zone (O(1) prefix lookup table)
  *  - Look up zone-to-zone shipping days via ZONE_MATRIX
  *  - Add product processing days for customisable items
  *  - Calculate business-day dates (skip Sundays + public holidays)
@@ -18,22 +18,20 @@ const {
   WAREHOUSE_PINCODE,
 } = require("../data/indiaZones");
 
-// ── In-memory pincode cache (TTL: 1 hour) ────────────────────────────────────
-const _cache = new Map();
-const CACHE_TTL_MS = 60 * 60 * 1000;
-
-function _getFromCache(pin) {
-  const entry = _cache.get(pin);
-  if (!entry) return null;
-  if (Date.now() - entry.ts > CACHE_TTL_MS) {
-    _cache.delete(pin);
-    return null;
+// ── Prefix lookup table ───────────────────────────────────────────────────────
+// The state depends only on the 3-digit PIN prefix (100–999), so precompute a
+// direct-address table once: O(1) lookups and fixed memory, instead of a
+// linear range scan plus a per-pincode cache that grew with every unique PIN.
+// Built by walking PINCODE_RANGES in order and only filling empty slots, which
+// preserves the "first matching range wins" rule.
+const _prefixTable = new Array(1000).fill(null);
+for (const [lo, hi, stateCode] of PINCODE_RANGES) {
+  const zone = STATE_TO_ZONE[stateCode];
+  for (let p = lo; p <= hi; p++) {
+    if (_prefixTable[p] !== null) continue;
+    // A matched range with an unknown zone still claims the prefix (→ null result)
+    _prefixTable[p] = zone ? Object.freeze({ state: stateCode, zone }) : false;
   }
-  return entry.data;
-}
-
-function _setCache(pin, data) {
-  _cache.set(pin, { data, ts: Date.now() });
 }
 
 // ── Pincode helpers ───────────────────────────────────────────────────────────
@@ -46,28 +44,11 @@ function isValidPincode(pin) {
 /**
  * Resolves a pincode to { state, zone }.
  * Returns null if the pincode doesn't map to a known state.
- * Results are cached for 1 hour.
  */
 function resolveZone(pincode) {
-  const pin = String(pincode).trim();
-
-  const cached = _getFromCache(pin);
-  if (cached) return cached;
-
-  const prefix = parseInt(pin.slice(0, 3), 10);
-
-  // Walk ranges; first match wins (ranges are ordered so specific ones come first)
-  for (const [lo, hi, stateCode] of PINCODE_RANGES) {
-    if (prefix >= lo && prefix <= hi) {
-      const zone = STATE_TO_ZONE[stateCode];
-      if (!zone) break;
-      const result = { state: stateCode, zone };
-      _setCache(pin, result);
-      return result;
-    }
-  }
-
-  return null; // not serviceable
+  const prefix = parseInt(String(pincode).trim().slice(0, 3), 10);
+  if (!(prefix >= 0 && prefix < 1000)) return null;
+  return _prefixTable[prefix] || null; // null → not serviceable
 }
 
 // ── Zone-to-zone shipping days ────────────────────────────────────────────────

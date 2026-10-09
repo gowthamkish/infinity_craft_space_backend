@@ -344,6 +344,20 @@ async function notifyCustomerStatusChange(order, user, newStatus) {
  * Retry all failed/pending logs that are due.
  * Call this from a cron job or startup sweep.
  */
+// Reverse index: Meta template name → TEMPLATES key, built once on first use
+// (replaces two linear scans of TEMPLATES per retried log). First key wins on
+// duplicate names, same as the Array.find it replaces.
+let _templateKeyByName = null;
+function templateKeyForName(name) {
+  if (!_templateKeyByName) {
+    _templateKeyByName = new Map();
+    for (const [key, t] of Object.entries(TEMPLATES)) {
+      if (!_templateKeyByName.has(t.name)) _templateKeyByName.set(t.name, key);
+    }
+  }
+  return _templateKeyByName.get(name);
+}
+
 async function retryFailedNotifications() {
   const due = await WhatsAppLog.find({
     status: { $in: ["pending", "failed"] },
@@ -352,9 +366,7 @@ async function retryFailedNotifications() {
   }).limit(50);
 
   for (const log of due) {
-    const template = Object.values(TEMPLATES).find((t) => t.name === log.templateName);
-    if (!template) continue;
-    const templateKey = Object.keys(TEMPLATES).find((k) => TEMPLATES[k].name === log.templateName);
+    const templateKey = templateKeyForName(log.templateName);
     if (!templateKey) continue;
     await sendWhatsApp({
       to: log.to,

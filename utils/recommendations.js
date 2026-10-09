@@ -6,6 +6,14 @@ const Order = require("../models/Order");
  * Provides product recommendations using multiple algorithms
  */
 
+// `$in` queries return documents in arbitrary order, which discards a ranking
+// computed beforehand. Re-sort the docs to match `rankedIds` in O(n) via a
+// Map of id → rank.
+const orderByRank = (docs, rankedIds) => {
+  const rank = new Map(rankedIds.map((id, i) => [String(id), i]));
+  return docs.sort((a, b) => rank.get(String(a._id)) - rank.get(String(b._id)));
+};
+
 // Get recommendations based on category/tags matching
 exports.getRecommendationsByProductId = async (productId, limit = 6) => {
   try {
@@ -85,7 +93,7 @@ exports.getTrendingProducts = async (limit = 6, days = 7) => {
       "name price images averageRating ratingCount stock",
     );
 
-    return products;
+    return orderByRank(products, productIds); // keep most-purchased first
   } catch (error) {
     console.error("Error fetching trending products:", error);
     return [];
@@ -103,21 +111,23 @@ exports.getPersonalizedRecommendations = async (userId, limit = 6) => {
       return exports.getPopularProducts(limit);
     }
 
-    // Extract categories from purchases
-    const purchasedCategories = [];
-    const purchasedProductIds = [];
+    // Extract categories from purchases — Sets dedupe repeat purchases so the
+    // $in / $nin lists stay small
+    const purchasedCategories = new Set();
+    const purchasedProductIds = new Map(); // String(id) → ObjectId
 
     userOrders.forEach((order) => {
       order.items.forEach((item) => {
-        purchasedCategories.push(item.product.category);
-        purchasedProductIds.push(item.product._id);
+        if (!item.product) return;
+        if (item.product.category) purchasedCategories.add(item.product.category);
+        if (item.product._id) purchasedProductIds.set(String(item.product._id), item.product._id);
       });
     });
 
     // Find similar products they haven't purchased
     const recommendations = await Product.find({
-      _id: { $nin: purchasedProductIds },
-      category: { $in: purchasedCategories },
+      _id: { $nin: [...purchasedProductIds.values()] },
+      category: { $in: [...purchasedCategories] },
     })
       .sort({ averageRating: -1, ratingCount: -1 })
       .limit(limit)
@@ -140,26 +150,24 @@ exports.getBoughtTogether = async (productId, limit = 4) => {
       .select("items")
       .limit(50);
 
-    // Count co-purchases
-    const coProductCounts = {};
+    // Count co-purchases with a hash map (id → count). The query already
+    // guarantees each order contains productId. Count each co-product once
+    // per order, so a product listed twice in one order isn't double-counted.
+    const target = String(productId);
+    const coProductCounts = new Map();
 
     orders.forEach((order) => {
-      const hasProduct = order.items.some(
-        (item) => item.product._id.toString() === productId,
-      );
-
-      if (hasProduct) {
-        order.items.forEach((item) => {
-          if (item.product._id.toString() !== productId) {
-            const id = item.product._id.toString();
-            coProductCounts[id] = (coProductCounts[id] || 0) + 1;
-          }
-        });
-      }
+      const seen = new Set();
+      order.items.forEach((item) => {
+        const id = item.product?._id ? String(item.product._id) : null;
+        if (!id || id === target || seen.has(id)) return;
+        seen.add(id);
+        coProductCounts.set(id, (coProductCounts.get(id) || 0) + 1);
+      });
     });
 
     // Get top co-purchased products
-    const topProducts = Object.entries(coProductCounts)
+    const topProducts = [...coProductCounts.entries()]
       .sort(([, a], [, b]) => b - a)
       .slice(0, limit)
       .map(([id]) => id);
@@ -168,7 +176,7 @@ exports.getBoughtTogether = async (productId, limit = 4) => {
       "name price images averageRating ratingCount stock",
     );
 
-    return products;
+    return orderByRank(products, topProducts); // most co-purchased first
   } catch (error) {
     console.error("Error fetching bought together products:", error);
     return [];
