@@ -20,6 +20,7 @@
     "multer-storage-cloudinary": "^4.0.0",
     "node-cron": "^3.0.2",
     "nodemailer": "^6.9.7",
+    "pdfkit": "^0.20.2",
     "razorpay": "^2.9.6",
     "voyageai": "^0.4.0",
     "xlsx": "^0.18.5"

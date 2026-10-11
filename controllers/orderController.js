@@ -237,4 +237,32 @@ const updateOrderStatus = async (req, res) => {
   }
 };
 
-module.exports = { createOrder, getUserOrders, getOrderById, updateOrderStatus };
+// GET /api/orders/:orderId/invoice — Bill of Supply PDF. Owner or admin only; unpaid/cancelled orders get none.
+const downloadInvoice = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+    const filter = req.user.isAdmin ? { _id: orderId } : { _id: orderId, userId: req.user._id };
+    const order = await Order.findOne(filter).lean();
+    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+    if (order.status === "cancelled" || (order.paymentMethod !== "cod" && order.paymentStatus !== "completed" && order.paymentStatus !== "refunded")) {
+      return res.status(409).json({ success: false, message: "An invoice is only available for confirmed orders" });
+    }
+
+    const customer = await User.findById(order.userId).select("username email").lean();
+    const { buildInvoicePdf, invoiceNumber } = require("../utils/invoicePdf");
+    const doc = buildInvoicePdf(order, customer || {});
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${invoiceNumber(order)}.pdf"`);
+    res.setHeader("Cache-Control", "private, no-store");
+    doc.pipe(res);
+    doc.end();
+  } catch (error) {
+    console.error("Error generating invoice:", error);
+    if (!res.headersSent) res.status(500).json({ success: false, message: "Failed to generate invoice" });
+  }
+};
+
+module.exports = { createOrder, getUserOrders, getOrderById, updateOrderStatus, downloadInvoice };
