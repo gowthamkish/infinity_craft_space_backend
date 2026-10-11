@@ -26,7 +26,7 @@ router.post(
   newsletterLimiter,
   [
     body("email").isString().trim().toLowerCase().isEmail().withMessage("Please enter a valid email address").isLength({ max: 254 }),
-    body("source").optional().isIn(["home", "footer", "other"]),
+    body("source").optional().isIn(["home", "footer", "launch", "other"]),
   ],
   async (req, res) => {
     const errors = validationResult(req);
