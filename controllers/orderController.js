@@ -144,6 +144,14 @@ const updateOrderStatus = async (req, res) => {
 
     const statusUpdate = { status, updatedAt: new Date() };
     if (status === "delivered") statusUpdate.deliveredAt = new Date();
+    if (status !== oldStatus) {
+      // Remember the change for the customer until they've seen it (they may be offline right now)
+      statusUpdate.statusNotice = {
+        status,
+        previousStatus: order.statusNotice?.previousStatus || oldStatus,
+        at: new Date(),
+      };
+    }
 
     const result = await Order.updateOne(
       { _id: orderId },
@@ -237,6 +245,44 @@ const updateOrderStatus = async (req, res) => {
   }
 };
 
+// GET /api/orders/status-updates — admin status changes the customer hasn't seen yet
+const getStatusUpdates = async (req, res) => {
+  try {
+    const orders = await Order.find({ userId: req.user._id, "statusNotice.status": { $exists: true } })
+      .sort({ "statusNotice.at": -1 })
+      .limit(20)
+      .lean();
+    const updates = orders
+      .filter((o) => o.statusNotice?.status === o.status) // a later change by someone else supersedes a stale notice
+      .map(({ statusNotice, ...order }) => ({ order, previousStatus: statusNotice.previousStatus || null, at: statusNotice.at }));
+    res.json({ success: true, updates });
+  } catch (error) {
+    console.error("Error fetching status updates:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch status updates" });
+  }
+};
+
+// POST /api/orders/status-updates/ack  { items: [{ orderId, status }] } — customer has seen these
+const ackStatusUpdates = async (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 50) : [];
+    const ops = items
+      .filter((i) => mongoose.Types.ObjectId.isValid(i?.orderId) && typeof i?.status === "string")
+      .map((i) => ({
+        updateOne: {
+          // matching on status means a newer admin change (not yet shown) is never acknowledged by mistake
+          filter: { _id: i.orderId, userId: req.user._id, "statusNotice.status": i.status },
+          update: { $unset: { statusNotice: "" } },
+        },
+      }));
+    if (ops.length) await Order.bulkWrite(ops);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error acknowledging status updates:", error);
+    res.status(500).json({ success: false, message: "Failed to acknowledge status updates" });
+  }
+};
+
 // GET /api/orders/:orderId/invoice — Bill of Supply PDF. Owner or admin only; unpaid/cancelled orders get none.
 const downloadInvoice = async (req, res) => {
   try {
@@ -265,4 +311,4 @@ const downloadInvoice = async (req, res) => {
   }
 };
 
-module.exports = { createOrder, getUserOrders, getOrderById, updateOrderStatus, downloadInvoice };
+module.exports = { createOrder, getUserOrders, getOrderById, updateOrderStatus, downloadInvoice, getStatusUpdates, ackStatusUpdates };

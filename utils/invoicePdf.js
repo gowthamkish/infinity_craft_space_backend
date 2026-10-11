@@ -5,7 +5,12 @@
  *  - carries no HSN/SAC codes.
  * Optional env: SHOP_PAN (defaults to the shop PAN), SHOP_PHONE, SHOP_EMAIL (defaults to the shop email).
  */
+const fs = require("fs");
+const path = require("path");
 const PDFDocument = require("pdfkit");
+
+const LOGO_PATH = path.join(__dirname, "..", "assets", "ics-logo.jpg");
+const LOGO = fs.existsSync(LOGO_PATH) ? fs.readFileSync(LOGO_PATH) : null; // read once, reused for every invoice
 
 const SHOP = {
   name: "Infinitycraftspace",
@@ -40,13 +45,16 @@ function buildInvoicePdf(order, customer = {}) {
   const R = L + W;
 
   // ── Header ──
-  doc.fillColor(EMBER).font("Helvetica-Bold").fontSize(20).text(SHOP.name, L, 48);
+  const LOGO_SIZE = 66;
+  const tx = LOGO ? L + LOGO_SIZE + 14 : L; // text column starts after the logo
+  if (LOGO) doc.image(LOGO, L, 48, { width: LOGO_SIZE, height: LOGO_SIZE });
+  doc.fillColor(EMBER).font("Helvetica-Bold").fontSize(20).text(SHOP.name, tx, 48);
   doc.fillColor(MUTED).font("Helvetica").fontSize(9);
-  SHOP.address.forEach((line) => doc.text(line, L, doc.y));
-  if (process.env.SHOP_PHONE) doc.text(`Phone: ${process.env.SHOP_PHONE}`);
-  doc.text(`Email: ${SHOP.email}`);
-  if (SHOP.pan) doc.text(`PAN: ${SHOP.pan}`);
-  const leftBottom = doc.y;
+  SHOP.address.forEach((line) => doc.text(line, tx, doc.y));
+  if (process.env.SHOP_PHONE) doc.text(`Phone: ${process.env.SHOP_PHONE}`, tx, doc.y);
+  doc.text(`Email: ${SHOP.email}`, tx, doc.y);
+  if (SHOP.pan) doc.text(`PAN: ${SHOP.pan}`, tx, doc.y);
+  const leftBottom = Math.max(doc.y, 48 + (LOGO ? LOGO_SIZE : 0));
 
   doc.fillColor(INK).font("Helvetica-Bold").fontSize(18).text("BILL OF SUPPLY", L, 48, { width: W, align: "right" });
   doc.font("Helvetica").fontSize(9).fillColor(MUTED);

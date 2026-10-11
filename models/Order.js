@@ -141,6 +141,14 @@ const OrderSchema = new mongoose.Schema(
 
     deliveredAt: { type: Date, default: null },
 
+    // Set when an ADMIN changes the status; cleared once the customer has seen it (modal/toast on login).
+    // previousStatus is the status the customer last knew about, so several offline changes collapse to one.
+    statusNotice: {
+      status: { type: String },
+      previousStatus: { type: String },
+      at: { type: Date },
+    },
+
     notes: String,
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
@@ -162,5 +170,6 @@ OrderSchema.index(
 OrderSchema.index({ "shiprocket.awbCode": 1 });
 OrderSchema.index({ "shiprocket.shipmentId": 1 });
 OrderSchema.index({ createdAt: -1 }); // Admin date-range scans
+OrderSchema.index({ userId: 1, "statusNotice.status": 1 }, { sparse: true }); // unseen status changes per customer
 
 module.exports = mongoose.model("Order", OrderSchema);
