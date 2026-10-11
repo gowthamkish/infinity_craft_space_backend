@@ -48,7 +48,7 @@ COD orders: refunds are issued as store credit or NEFT transfer (provide bank de
 Standard delivery: 4-7 business days depending on your location.
 Metro cities (Mumbai, Delhi, Bangalore, Chennai, Hyderabad, Kolkata): typically 3-5 days.
 North-east and remote areas: up to 10 business days.
-Free shipping on orders above ₹999. Below ₹999, flat ₹59 shipping fee.
+Shipping is charged on every order. The charge is calculated at checkout from the delivery distance (zone) and the weight of your parcel; there is no free-shipping threshold.
 Tracking: once shipped you receive a tracking link via SMS and email. You can also track in My Orders.
 COD (Cash on Delivery): available on orders up to ₹3000.
 We ship Monday to Saturday, excluding public holidays.`,

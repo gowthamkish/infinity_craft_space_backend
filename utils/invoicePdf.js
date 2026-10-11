@@ -118,7 +118,7 @@ function buildInvoicePdf(order, customer = {}) {
   };
   row("Subtotal", money(order.subtotal));
   if (order.discount?.amount > 0) row(`Discount${order.discount.code ? ` (${order.discount.code})` : ""}`, `- ${money(order.discount.amount)}`);
-  row("Shipping", order.shipping > 0 ? money(order.shipping) : "Free");
+  row("Shipping", money(order.shipping));
   doc.moveTo(L + 300, y).lineTo(R, y).strokeColor(INK).stroke();
   y += 8;
   row("Total", money(order.totalAmount), { bold: true });
