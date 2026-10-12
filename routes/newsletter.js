@@ -5,7 +5,7 @@ const NewsletterSubscriber = require("../models/NewsletterSubscriber");
 const { protect, isAdmin } = require("../middlewares/authMiddleware");
 const { newsletterLimiter } = require("../middlewares/rateLimiter");
 const { enqueueEmail } = require("../utils/emailQueue");
-const { sendNewsletterWelcome } = require("../utils/emailService");
+const { sendNewsletterWelcome, sendLaunchWaitlistConfirmation } = require("../utils/emailService");
 
 const SUBSCRIBE_MESSAGE = "Thanks for subscribing! Watch your inbox for new collections and offers.";
 
@@ -58,7 +58,8 @@ router.post(
 
       if (shouldWelcome) {
         const unsubscribeUrl = `${apiBase(req)}/api/newsletter/unsubscribe?token=${doc.unsubscribeToken}`;
-        enqueueEmail(() => sendNewsletterWelcome(email, unsubscribeUrl));
+        // Pre-launch signups get a launch-specific confirmation (the generic welcome links to the shop, which is still locked)
+        enqueueEmail(() => (source === "launch" ? sendLaunchWaitlistConfirmation(email, unsubscribeUrl) : sendNewsletterWelcome(email, unsubscribeUrl)));
       }
 
       // Same answer whether the address was new or already on the list (no enumeration)

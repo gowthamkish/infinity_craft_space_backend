@@ -274,6 +274,54 @@ exports.sendNewsletterWelcome = async (email, unsubscribeUrl) => {
   return exports.sendEmail(email, template);
 };
 
+// ── Launch emails (dark red / black / gold, matching the launch banner) ─────────
+const LAUNCH_DATE_TEXT = "20 November 2026";
+const launchShell = (inner, unsubscribeUrl) => `
+  <div style="background:#0b0505;padding:32px 16px;font-family:Inter,Arial,sans-serif;">
+    <div style="max-width:560px;margin:0 auto;background:linear-gradient(160deg,#1a0707,#3a0a0a);border:1px solid #c8932c;border-radius:20px;padding:36px 32px;text-align:center;color:#fff;">
+      ${inner}
+      <p style="color:#b9a98f;font-size:12px;margin:28px 0 0;">
+        Changed your mind? <a href="${unsubscribeUrl}" style="color:#e2b04a;">Unsubscribe in one click</a>.
+      </p>
+    </div>
+  </div>`;
+
+// Sent right after someone taps "Notify me" on the pre-launch banner
+exports.sendLaunchWaitlistConfirmation = async (email, unsubscribeUrl) => {
+  const template = {
+    subject: "You're on the list — InfinityCraftSpace launches 20 November 2026 ✨",
+    html: launchShell(`
+      <p style="margin:0 0 8px;color:#e2b04a;font-size:12px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;">You're invited</p>
+      <h2 style="margin:0 0 12px;font-size:26px;color:#f7dc8a;">Grand Website Launch</h2>
+      <p style="color:#e9dcc5;line-height:1.6;margin:0 0 18px;">
+        Thank you for signing up! We'll email you the moment InfinityCraftSpace goes live on
+        <strong style="color:#f7dc8a;">${LAUNCH_DATE_TEXT}</strong> — handcrafted gifts made with love and delivered across India.
+      </p>
+      <p style="color:#b9a98f;margin:0;">Keep an eye on your inbox. 💛</p>`, unsubscribeUrl),
+  };
+  return exports.sendEmail(email, template);
+};
+
+// Launch-day announcement (sent by scripts/sendLaunchEmail.js)
+exports.sendLaunchAnnouncement = async (email, unsubscribeUrl) => {
+  const frontendUrl = process.env.FRONTEND_URL || "https://www.infinitycraftspace.com";
+  const template = {
+    subject: "We're live! InfinityCraftSpace is open 🎉",
+    html: launchShell(`
+      <p style="margin:0 0 8px;color:#e2b04a;font-size:12px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;">It's here</p>
+      <h2 style="margin:0 0 12px;font-size:26px;color:#f7dc8a;">InfinityCraftSpace is live!</h2>
+      <p style="color:#e9dcc5;line-height:1.6;margin:0 0 24px;">
+        You asked us to tell you — the doors are open. Explore handcrafted gifts, custom pieces and more.
+      </p>
+      <p style="margin:0;">
+        <a href="${frontendUrl}/products" style="background:linear-gradient(180deg,#ffe9a3,#e2b04a);color:#1b1203;padding:14px 30px;text-decoration:none;border-radius:999px;display:inline-block;font-weight:800;">
+          Start shopping
+        </a>
+      </p>`, unsubscribeUrl),
+  };
+  return exports.sendEmail(email, template);
+};
+
 // Batch send emails (admin notifications)
 exports.sendAdminNotification = async (subject, html) => {
   try {

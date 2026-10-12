@@ -9,6 +9,8 @@ const NewsletterSubscriberSchema = new mongoose.Schema(
     unsubscribeToken: { type: String, required: true, unique: true },
     subscribedAt: { type: Date, default: Date.now },
     unsubscribedAt: { type: Date, default: null },
+    // Set by scripts/sendLaunchEmail.js so the launch-day announcement is never sent twice to one person
+    launchEmailSentAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
