@@ -4,7 +4,7 @@
  *   node scripts/sendLaunchEmail.js            -> DRY RUN: only counts who would receive it
  *   node scripts/sendLaunchEmail.js --send     -> really sends (throttled; safe to re-run: nobody gets it twice)
  *
- * Needs the same env as the server (MONGO_URI, EMAIL_USER/EMAIL_PASS, FRONTEND_URL, API_PUBLIC_URL).
+ * Needs the same env as the server (MONGO_URI, EMAIL_USER/EMAIL_PASSWORD, FRONTEND_URL, API_PUBLIC_URL).
  */
 require("dotenv").config();
 const mongoose = require("mongoose");

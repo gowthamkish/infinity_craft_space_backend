@@ -295,7 +295,7 @@ exports.sendLaunchWaitlistConfirmation = async (email, unsubscribeUrl) => {
       <h2 style="margin:0 0 12px;font-size:26px;color:#f7dc8a;">Grand Website Launch</h2>
       <p style="color:#e9dcc5;line-height:1.6;margin:0 0 18px;">
         Thank you for signing up! We'll email you the moment InfinityCraftSpace goes live on
-        <strong style="color:#f7dc8a;">${LAUNCH_DATE_TEXT}</strong> — handcrafted gifts made with love and delivered across India.
+        <strong style="color:#f7dc8a;">${LAUNCH_DATE_TEXT}, 12:00 AM IST</strong> — handcrafted gifts made with love and delivered across India.
       </p>
       <p style="color:#b9a98f;margin:0;">Keep an eye on your inbox. 💛</p>`, unsubscribeUrl),
   };
