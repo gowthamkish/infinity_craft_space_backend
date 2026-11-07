@@ -5,6 +5,7 @@ const {
   uploadBase64Image,
   uploadMultipleBase64Images,
   deleteImage,
+  deleteMultipleImages,
 } = require("../config/cloudinary");
 const { protect, isAdmin } = require("../middlewares/authMiddleware");
 const {
@@ -208,7 +209,10 @@ router.post("/", protect, isAdmin, productValidation, async (req, res) => {
       category,
       subCategory,
       // Stock/Inventory fields
-      stock: req.body.stock !== undefined ? parseInt(req.body.stock) : 0,
+      stock:
+        req.body.stock == null || String(req.body.stock).trim() === ""
+          ? 0
+          : parseInt(req.body.stock, 10),
       lowStockThreshold:
         req.body.lowStockThreshold !== undefined
           ? parseInt(req.body.lowStockThreshold)
@@ -327,7 +331,10 @@ router.post(
         category,
         subCategory,
         // Stock/Inventory fields
-        stock: req.body.stock !== undefined ? parseInt(req.body.stock) : 0,
+        stock:
+          req.body.stock == null || String(req.body.stock).trim() === ""
+            ? 0
+            : parseInt(req.body.stock, 10),
         lowStockThreshold:
           req.body.lowStockThreshold !== undefined
             ? parseInt(req.body.lowStockThreshold)
@@ -478,7 +485,10 @@ router.put("/:id", protect, isAdmin, async (req, res) => {
 
     // Update stock/inventory fields
     if (req.body.stock !== undefined)
-      updateData.stock = parseInt(req.body.stock);
+      updateData.stock =
+        req.body.stock == null || String(req.body.stock).trim() === ""
+          ? 0
+          : parseInt(req.body.stock, 10);
     if (req.body.lowStockThreshold !== undefined)
       updateData.lowStockThreshold = parseInt(req.body.lowStockThreshold);
     if (req.body.trackInventory !== undefined)
