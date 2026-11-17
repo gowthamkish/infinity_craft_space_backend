@@ -4,6 +4,8 @@ const { protect, isAdmin } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
 
+const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // @desc    Get categories for public use (products page)
 // @route   GET /api/categories/public/list
 // @access  Public
@@ -97,15 +99,36 @@ router.post('/', async (req, res) => {
   try {
     const { name, description, subcategories = [] } = req.body;
 
-    // Check if category already exists
-    const existingCategory = await Category.findOne({ 
-      name: { $regex: new RegExp(`^${name}$`, 'i') }
-    });
+    const trimmedName = typeof name === 'string' ? name.trim() : name;
 
-    if (existingCategory) {
+    // Check if category already exists (case-insensitive, exact match)
+    const existingCategory = trimmedName
+      ? await Category.findOne({
+          name: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, 'i') }
+        })
+      : null;
+
+    if (existingCategory && existingCategory.isActive) {
       return res.status(400).json({
         success: false,
         message: 'Category with this name already exists'
+      });
+    }
+
+    // A soft-deleted (inactive) category with this name exists: reactivate it
+    if (existingCategory) {
+      existingCategory.name = trimmedName;
+      existingCategory.description = description;
+      existingCategory.subcategories = subcategories;
+      existingCategory.isActive = true;
+      existingCategory.createdBy = req.user._id;
+      await existingCategory.save();
+      await existingCategory.populate('createdBy', 'username email');
+
+      return res.status(201).json({
+        success: true,
+        message: 'Category created successfully',
+        category: existingCategory
       });
     }
 
@@ -166,7 +189,7 @@ router.put('/:id', async (req, res) => {
     // Check if new name conflicts with existing category (excluding current one)
     if (name && name !== category.name) {
       const existingCategory = await Category.findOne({ 
-        name: { $regex: new RegExp(`^${name}$`, 'i') },
+        name: { $regex: new RegExp(`^${escapeRegex(name.trim())}$`, 'i') },
         _id: { $ne: req.params.id }
       });
 
