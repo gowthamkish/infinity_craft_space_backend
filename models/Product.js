@@ -107,6 +107,16 @@ const ProductSchema = new mongoose.Schema({
   showHoopSizePicker: { type: Boolean, default: false },
   hoopSizes: { type: [Number], default: [] }, // available inch sizes e.g. [6, 8, 10, 12]
 
+  // Artificial-flower string lengths (Jasmine / Mullai string). Each length has its own admin-set price.
+  showStringSizePicker: { type: Boolean, default: false },
+  stringSizes: [
+    {
+      inches: { type: Number, required: true }, // 4, 8, 12, 16, 24, 32
+      price: { type: Number, required: true, min: 0 },
+      _id: false,
+    },
+  ],
+
   // Color variants
   showColorPickerToUsers: { type: Boolean, default: false },
   colors: [

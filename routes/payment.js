@@ -15,6 +15,7 @@ const { enqueueEmail } = require("../utils/emailQueue");
 const { sendConfirmationEmail } = require("../utils/emailService");
 const { notifyAdminNewOrder } = require("../services/whatsappService");
 const { computeShipping } = require("../utils/shippingRates");
+const { parseStringSize, resolveUnitPrice } = require("../utils/stringSizes");
 
 // Lazily initialize Razorpay so credential changes take effect on restart
 function getRazorpay() {
@@ -45,6 +46,7 @@ router.post("/", protect, async (req, res) => {
       requested = items.map((item) => ({
         productId: String(item.productId || item.product?._id || ""),
         quantity: Number(item.quantity ?? 1),
+        stringSize: parseStringSize(item.stringSize ?? item.selectedStringSize),
       }));
     } else {
       // No items sent — fall back to the user's server-side cart
@@ -52,6 +54,7 @@ router.post("/", protect, async (req, res) => {
       requested = (cart?.items || []).map((i) => ({
         productId: String(i.productId || ""),
         quantity: Number(i.quantity ?? 1),
+        stringSize: parseStringSize(i.stringSize),
       }));
     }
 
@@ -62,8 +65,9 @@ router.post("/", protect, async (req, res) => {
       return res.status(400).json({ success: false, message: "Too many items in one order" });
     }
 
-    const qtyByProduct = new Map();
-    for (const { productId, quantity } of requested) {
+    const qtyByProduct = new Map(); // total qty per product (stock is shared across sizes)
+    const lines = new Map(); // `${productId}|${size}` → { productId, stringSize, qty }
+    for (const { productId, quantity, stringSize } of requested) {
       if (!mongoose.Types.ObjectId.isValid(productId)) {
         return res.status(400).json({ success: false, message: "Invalid product in cart" });
       }
@@ -71,6 +75,10 @@ router.post("/", protect, async (req, res) => {
         return res.status(400).json({ success: false, message: "Invalid item quantity" });
       }
       qtyByProduct.set(productId, (qtyByProduct.get(productId) || 0) + quantity);
+      const key = `${productId}|${stringSize ?? ""}`;
+      const line = lines.get(key) || { productId, stringSize, qty: 0 };
+      line.qty += quantity;
+      lines.set(key, line);
     }
 
     // ── 2. Load authoritative product data in ONE query ──
@@ -104,17 +112,28 @@ router.post("/", protect, async (req, res) => {
           continue;
         }
       }
+    }
+
+    // One order line per product + string size, priced from the database
+    for (const { productId, stringSize, qty } of lines.values()) {
+      const dbProduct = productMap.get(productId);
+      if (!dbProduct || stockErrors.some((e) => e.productId === productId)) continue;
+      const resolved = resolveUnitPrice(dbProduct, stringSize);
+      if (resolved.error) {
+        return res.status(400).json({ success: false, message: resolved.error });
+      }
       orderItems.push({
         product: {
           _id: dbProduct._id,
           name: dbProduct.name,
-          price: dbProduct.price,
+          price: resolved.price,
           description: dbProduct.description,
           category: dbProduct.category,
           subCategory: dbProduct.subCategory,
         },
         quantity: qty,
-        totalPrice: dbProduct.price * qty,
+        selectedStringSize: resolved.stringSize,
+        totalPrice: resolved.price * qty,
       });
     }
 

@@ -8,6 +8,7 @@ const CartSchema = new mongoose.Schema({
       quantity: { type: Number, default: 1 },
       priceAtTimeOfAdd: { type: Number, default: 0 }, // snapshot — guards against price changes before checkout
       variantId: { type: String, default: null },
+      stringSize: { type: Number, default: null }, // inches — Jasmine/Mullai string products
     },
   ],
   updatedAt: { type: Date, default: Date.now },

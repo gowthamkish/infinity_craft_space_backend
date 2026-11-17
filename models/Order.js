@@ -32,6 +32,7 @@ const OrderSchema = new mongoose.Schema(
           subCategory: { type: String, required: true },
         },
         quantity: { type: Number, required: true },
+        selectedStringSize: { type: Number, default: null }, // inches, for Jasmine/Mullai string products
         totalPrice: { type: Number, required: true },
         variant: {
           color: String,

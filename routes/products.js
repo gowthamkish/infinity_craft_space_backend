@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const Product = require("../models/Product");
+const { sanitizeStringSizes } = require("../utils/stringSizes");
 const {
   upload,
   uploadBase64Image,
@@ -244,9 +245,16 @@ router.post("/", protect, isAdmin, productValidation, async (req, res) => {
       hoopSizes: Array.isArray(req.body.hoopSizes)
         ? req.body.hoopSizes.map(Number).filter((n) => [6, 8, 10, 12].includes(n))
         : [],
+      showStringSizePicker: req.body.showStringSizePicker === true || req.body.showStringSizePicker === "true",
+      stringSizes: sanitizeStringSizes(req.body.stringSizes),
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+
+    // Listing cards/sorting use `price`, so keep it at the cheapest string length ("from" price)
+    if (productData.stringSizes.length > 0) {
+      productData.price = Math.min(...productData.stringSizes.map((s) => s.price));
+    }
 
     // Add images data
     if (imagesData.length > 0) {
@@ -507,6 +515,12 @@ router.put("/:id", protect, isAdmin, async (req, res) => {
       updateData.showColorPickerToUsers = req.body.showColorPickerToUsers === true || req.body.showColorPickerToUsers === "true";
     if (req.body.showHoopSizePicker !== undefined)
       updateData.showHoopSizePicker = req.body.showHoopSizePicker === true || req.body.showHoopSizePicker === "true";
+    if (req.body.showStringSizePicker !== undefined)
+      updateData.showStringSizePicker = req.body.showStringSizePicker === true || req.body.showStringSizePicker === "true";
+    if (Array.isArray(req.body.stringSizes))
+      updateData.stringSizes = sanitizeStringSizes(req.body.stringSizes);
+    if (updateData.stringSizes?.length > 0)
+      updateData.price = Math.min(...updateData.stringSizes.map((s) => s.price));
     if (Array.isArray(req.body.hoopSizes))
       updateData.hoopSizes = req.body.hoopSizes.map(Number).filter((n) => [6, 8, 10, 12].includes(n));
     if (Array.isArray(req.body.colors))

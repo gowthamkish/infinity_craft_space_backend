@@ -4,6 +4,7 @@ const Product = require("../models/Product");
 const Notification = require("../models/Notification");
 const User = require("../models/User");
 const { notifyCustomerStatusChange } = require("../services/whatsappService");
+const { resolveUnitPrice } = require("../utils/stringSizes");
 
 const createOrder = async (req, res) => {
   try {
@@ -33,17 +34,23 @@ const createOrder = async (req, res) => {
         });
       }
 
+      const resolved = resolveUnitPrice(dbProduct, item.stringSize ?? item.selectedStringSize);
+      if (resolved.error) {
+        return res.status(400).json({ success: false, error: resolved.error });
+      }
+
       verifiedItems.push({
         product: {
           _id:         dbProduct._id,
           name:        dbProduct.name,
-          price:       dbProduct.price,        // always use DB price
+          price:       resolved.price,         // always use DB price (size-specific for string products)
           description: dbProduct.description || "",
           category:    dbProduct.category,
           subCategory: dbProduct.subCategory,
         },
         quantity:   item.quantity,
-        totalPrice: dbProduct.price * item.quantity,
+        selectedStringSize: resolved.stringSize,
+        totalPrice: resolved.price * item.quantity,
         variant:    item.variant || {},
       });
     }

@@ -2,6 +2,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const Cart = require("../models/Cart");
 const Product = require("../models/Product");
+const { parseStringSize, resolveUnitPrice } = require("../utils/stringSizes");
 const router = express.Router();
 
 // SECURITY: the cart owner is ALWAYS the logged-in user (req.user, set by `protect`
@@ -10,6 +11,35 @@ const router = express.Router();
 const ownerId = (req) => String(req.user._id);
 // "/me" is what the frontend calls; an explicit id is only accepted if it is the caller's own.
 const isOwnParam = (req) => req.params.userId === "me" || req.params.userId === ownerId(req);
+const lineKey = (productId, size) => `${productId}|${size ?? ""}`;
+const PRODUCT_SELECT = "name price description image category subCategory stock trackInventory showStringSizePicker stringSizes";
+// Shape one stored cart line for the frontend; string products are priced by their chosen size.
+const toClientItem = (item) => {
+  const p = item.productId;
+  const { price } = resolveUnitPrice(p, item.stringSize);
+  const sized = p.showStringSizePicker && p.stringSizes?.length > 0;
+  return {
+    product: {
+      _id: p._id,
+      name: p.name,
+      price: price ?? p.price,
+      description: p.description,
+      image: p.image,
+      category: p.category,
+      subCategory: p.subCategory,
+      stock: p.stock,
+      trackInventory: p.trackInventory,
+    },
+    quantity: item.quantity,
+    totalPrice: item.quantity * (price ?? p.price),
+    ...(sized && item.stringSize != null ? { selectedStringSize: item.stringSize } : {}),
+  };
+};
+const entriesToItems = (map) =>
+  [...map.entries()].map(([key, quantity]) => {
+    const [productId, size] = key.split("|");
+    return { productId, quantity, stringSize: size === "" ? null : Number(size) };
+  });
 const parseQty = (q) => (Number.isInteger(Number(q)) && Number(q) >= 1 && Number(q) <= 100 ? Number(q) : null);
 
 // Get user's cart with populated product details
@@ -22,8 +52,7 @@ router.get("/:userId", async (req, res) => {
 
     const cart = await Cart.findOne({ userId }).populate({
       path: "items.productId",
-      select:
-        "name price description image category subCategory stock trackInventory",
+      select: PRODUCT_SELECT,
     });
 
     if (!cart) {
@@ -33,21 +62,7 @@ router.get("/:userId", async (req, res) => {
     // Transform cart items to match frontend format
     const items = cart.items
       .filter((item) => item.productId) // Filter out items with deleted products
-      .map((item) => ({
-        product: {
-          _id: item.productId._id,
-          name: item.productId.name,
-          price: item.productId.price,
-          description: item.productId.description,
-          image: item.productId.image,
-          category: item.productId.category,
-          subCategory: item.productId.subCategory,
-          stock: item.productId.stock,
-          trackInventory: item.productId.trackInventory,
-        },
-        quantity: item.quantity,
-        totalPrice: item.quantity * item.productId.price,
-      }));
+      .map(toClientItem);
 
     res.json({ success: true, items });
   } catch (error) {
@@ -83,7 +98,7 @@ router.post("/sync", async (req, res) => {
     for (const item of items || []) {
       const pid = item?.product?._id;
       const qty = parseQty(item?.quantity);
-      if (pid && qty) incomingMap.set(String(pid), qty);
+      if (pid && qty) incomingMap.set(lineKey(pid, parseStringSize(item.selectedStringSize)), qty);
     }
 
     let cart = await Cart.findOne({ userId });
@@ -91,7 +106,7 @@ router.post("/sync", async (req, res) => {
     if (!cart) {
       cart = new Cart({
         userId,
-        items: [...incomingMap.entries()].map(([productId, quantity]) => ({ productId, quantity })),
+        items: entriesToItems(incomingMap),
       });
     } else {
       const serverIsNewer =
@@ -101,21 +116,15 @@ router.post("/sync", async (req, res) => {
         // Merge: union of both carts, taking max quantity per product so no
         // items added in either tab are lost.
         const mergedMap = new Map(
-          cart.items.map((item) => [item.productId.toString(), item.quantity])
+          cart.items.map((item) => [lineKey(item.productId, item.stringSize), item.quantity])
         );
         incomingMap.forEach((qty, pid) => {
           mergedMap.set(pid, Math.max(mergedMap.get(pid) || 0, qty));
         });
-        cart.items = [...mergedMap.entries()].map(([productId, quantity]) => ({
-          productId,
-          quantity,
-        }));
+        cart.items = entriesToItems(mergedMap);
       } else {
         // Client is authoritative — straightforward replace.
-        cart.items = [...incomingMap.entries()].map(([productId, quantity]) => ({
-          productId,
-          quantity,
-        }));
+        cart.items = entriesToItems(incomingMap);
       }
     }
 
@@ -124,26 +133,12 @@ router.post("/sync", async (req, res) => {
     // Always return the resolved cart so the calling tab can update its state.
     const populated = await Cart.findById(cart._id).populate({
       path: "items.productId",
-      select: "name price description image category subCategory stock trackInventory",
+      select: PRODUCT_SELECT,
     });
 
     const resolvedItems = (populated.items || [])
       .filter((item) => item.productId)
-      .map((item) => ({
-        product: {
-          _id: item.productId._id,
-          name: item.productId.name,
-          price: item.productId.price,
-          description: item.productId.description,
-          image: item.productId.image,
-          category: item.productId.category,
-          subCategory: item.productId.subCategory,
-          stock: item.productId.stock,
-          trackInventory: item.productId.trackInventory,
-        },
-        quantity: item.quantity,
-        totalPrice: item.quantity * item.productId.price,
-      }));
+      .map(toClientItem);
 
     res.json({
       success: true,
@@ -179,6 +174,7 @@ router.post("/add", async (req, res) => {
   try {
     const userId = ownerId(req);
     const { productId } = req.body;
+    const stringSize = parseStringSize(req.body.stringSize);
     const quantity = req.body.quantity === undefined ? 1 : parseQty(req.body.quantity);
     if (!mongoose.Types.ObjectId.isValid(String(productId)) || !quantity) {
       return res.status(400).json({ success: false, error: "Valid productId and quantity are required" });
@@ -193,18 +189,21 @@ router.post("/add", async (req, res) => {
       });
     }
 
+    const sizeCheck = resolveUnitPrice(product, stringSize);
+    if (sizeCheck.error) {
+      return res.status(400).json({ success: false, error: sizeCheck.error });
+    }
+
     // Check if inventory tracking is enabled and validate stock
     if (product.trackInventory) {
       // Get current quantity in cart
       let currentCartQuantity = 0;
       const existingCart = await Cart.findOne({ userId });
       if (existingCart) {
-        const cartItem = existingCart.items.find(
-          (item) => item.productId.toString() === productId,
-        );
-        if (cartItem) {
-          currentCartQuantity = cartItem.quantity;
-        }
+        // Stock is shared across all sizes of a product
+        currentCartQuantity = existingCart.items
+          .filter((item) => item.productId.toString() === productId)
+          .reduce((sum, item) => sum + item.quantity, 0);
       }
 
       const requestedTotal = currentCartQuantity + quantity;
@@ -229,15 +228,15 @@ router.post("/add", async (req, res) => {
 
     let cart = await Cart.findOne({ userId });
     if (!cart) {
-      cart = new Cart({ userId, items: [{ productId, quantity }] });
+      cart = new Cart({ userId, items: [{ productId, quantity, stringSize: sizeCheck.stringSize }] });
     } else {
       const itemIndex = cart.items.findIndex(
-        (item) => item.productId.toString() === productId,
+        (item) => item.productId.toString() === productId && (item.stringSize ?? null) === sizeCheck.stringSize,
       );
       if (itemIndex > -1) {
         cart.items[itemIndex].quantity += quantity;
       } else {
-        cart.items.push({ productId, quantity });
+        cart.items.push({ productId, quantity, stringSize: sizeCheck.stringSize });
       }
     }
     await cart.save();
