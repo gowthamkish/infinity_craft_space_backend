@@ -256,6 +256,8 @@ app.use("/api/whatsapp", require("./routes/whatsapp"));
 app.use("/api/chat", require("./routes/chat"));
 // Dynamic sitemap (no auth required — for search engine crawlers)
 app.use("/", require("./routes/sitemap"));
+// Crawler-ready HTML for AI/answer-engine bots (GEO/AEO)
+app.use("/", require("./routes/seo"));
 
 // ── Centralised error handler ─────────────────────────────────────────────────
 // Differentiates operational errors (safe to expose) from programmer errors

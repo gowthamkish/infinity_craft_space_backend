@@ -60,7 +60,11 @@ const getAllProducts = async (req, res) => {
 
 const getProduct = async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
+    // Accept either the ObjectId or the SEO slug (canonical URLs use the slug)
+    const { id } = req.params;
+    const product = require("mongoose").Types.ObjectId.isValid(id)
+      ? await Product.findById(id)
+      : await Product.findOne({ slug: id });
     if (!product) {
       return res.status(404).json({ success: false, error: "Product not found" });
     }

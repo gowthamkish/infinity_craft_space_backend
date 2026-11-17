@@ -20,11 +20,10 @@ let cacheExpiry = 0;
 const STATIC_PAGES = [
   { loc: "/",                changefreq: "daily",   priority: "1.0" },
   { loc: "/products",        changefreq: "daily",   priority: "0.9" },
-  { loc: "/login",           changefreq: "monthly", priority: "0.3" },
-  { loc: "/register",        changefreq: "monthly", priority: "0.3" },
-  { loc: "/contact",         changefreq: "monthly", priority: "0.4" },
+  { loc: "/contact-us",       changefreq: "monthly", priority: "0.4" },
   { loc: "/return-policy",   changefreq: "monthly", priority: "0.3" },
-  { loc: "/terms",           changefreq: "monthly", priority: "0.3" },
+  { loc: "/terms-and-conditions", changefreq: "monthly", priority: "0.3" },
+  { loc: "/privacy-policy",  changefreq: "monthly", priority: "0.3" },
 ];
 
 function escapeXml(str) {
@@ -68,7 +67,7 @@ router.get("/sitemap.xml", async (_req, res) => {
       .lean();
 
     const productPages = products.map((p) => ({
-      loc: p.slug ? `/products/${p.slug}` : `/product/${p._id}`,
+      loc: `/product/${p.slug || p._id}`, // matches the real route + canonical
       lastmod: p.updatedAt ? new Date(p.updatedAt).toISOString().split("T")[0] : undefined,
       changefreq: "weekly",
       priority: "0.8",
