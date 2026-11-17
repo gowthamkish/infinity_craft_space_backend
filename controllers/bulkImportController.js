@@ -88,7 +88,7 @@ async function bulkImport(req, res) {
         name,
         category,
         subCategory:       String(row.subCategory || "").trim() || undefined,
-        sku:               String(row.sku || "").trim() || undefined,
+        sku:               String(row.sku || "").trim().toUpperCase() || undefined,
         price,
         compareAtPrice:    row.compareAtPrice ? parseFloat(row.compareAtPrice) : undefined,
         description:       String(row.description || "").trim(),
