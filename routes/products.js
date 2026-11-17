@@ -532,8 +532,57 @@ router.put("/:id", protect, isAdmin, async (req, res) => {
         sortOrder:      c.sortOrder !== undefined ? parseInt(c.sortOrder) : i,
       }));
 
+    // Admin edited the gallery: `existingImages` is the kept images in their final order
+    // (removed ones are simply absent); any new uploads in `images` go after them.
+    if (Array.isArray(req.body.existingImages)) {
+      try {
+        const imgKey = (i) => i.publicId || i.url;
+        const plain = product.toObject();
+        const source = plain.images?.length
+          ? plain.images
+          : plain.image?.url
+            ? [{ ...plain.image, isPrimary: true }]
+            : [];
+        const kept = [];
+        const keptKeys = new Set();
+        for (const e of req.body.existingImages) {
+          const k = imgKey(e || {});
+          const match = k && !keptKeys.has(k) && source.find((s) => imgKey(s) === k);
+          if (match) { kept.push(match); keptKeys.add(k); }
+        }
+        const removed = source.filter((s) => !keptKeys.has(imgKey(s)));
+
+        const validImages = (Array.isArray(images) ? images : []).filter(
+          (img) => img && (img.base64?.length > 100 || img.data?.length > 100),
+        );
+        const uploaded = validImages.length > 0 ? await uploadMultipleBase64Images(validImages) : [];
+
+        const finalImages = [...kept, ...uploaded].map((img, idx) => ({ ...img, isPrimary: idx === 0 }));
+        if (finalImages.length + 0 > 10) {
+          return res.status(400).json({ success: false, error: "A product can have at most 10 images" });
+        }
+        updateData.images = finalImages;
+        updateData.image = finalImages[0]
+          ? {
+              url: finalImages[0].url,
+              publicId: finalImages[0].publicId,
+              originalName: finalImages[0].originalName,
+              uploadedAt: finalImages[0].uploadedAt,
+            }
+          : {};
+
+        // Best-effort Cloudinary cleanup after the new gallery is ready
+        const removedIds = removed.map((r) => r.publicId).filter(Boolean);
+        if (removedIds.length > 0) {
+          deleteMultipleImages(removedIds).catch((e) => console.error("Image cleanup failed:", e.message));
+        }
+      } catch (imageError) {
+        console.error("Gallery update failed:", imageError);
+        return res.status(400).json({ success: false, error: `Images update failed: ${imageError.message}` });
+      }
+    }
     // Handle multiple images update
-    if (images && Array.isArray(images) && images.length > 0) {
+    else if (images && Array.isArray(images) && images.length > 0) {
       try {
         // Delete old images if not keeping existing ones
         if (
