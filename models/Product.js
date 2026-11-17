@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { formatProductName } = require("../utils/formatProductName");
 
 const VariantSchema = new mongoose.Schema(
   {
@@ -51,7 +52,7 @@ const BulkDiscountSchema = new mongoose.Schema(
 );
 
 const ProductSchema = new mongoose.Schema({
-  name: { type: String, required: true },
+  name: { type: String, required: true, set: formatProductName }, // always stored in Title Case
   sku: { type: String, trim: true, uppercase: true },
   // SEO-friendly slug: auto-generated from name if not provided
   // e.g. "Handmade Resin Coaster Set" → "handmade-resin-coaster-set"
