@@ -2,6 +2,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const Cart = require("../models/Cart");
 const Product = require("../models/Product");
+const { formatProductName } = require("../utils/formatProductName");
 const { parseStringSize, resolveUnitPrice } = require("../utils/stringSizes");
 const router = express.Router();
 
@@ -21,7 +22,7 @@ const toClientItem = (item) => {
   return {
     product: {
       _id: p._id,
-      name: p.name,
+      name: formatProductName(p.name),
       price: price ?? p.price,
       description: p.description,
       image: p.image,
