@@ -175,13 +175,15 @@ function csrfProtect(req, res, next) {
   // it cannot be a cross-site forgery (browsers set Origin on all cross-origin requests
   // and it is a forbidden header that JS cannot spoof).
   if (headerToken) {
-    const origin = req.headers.origin || req.headers.referer || "";
-    const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const trusted = allowedOrigins.some((o) => origin.startsWith(o));
-    if (trusted) return next();
+    // Use the same allow-list as CORS (it has built-in production defaults when
+    // ALLOWED_ORIGINS is unset) and compare exact origins, not string prefixes.
+    let requestOrigin = "";
+    try {
+      requestOrigin = new URL(req.headers.origin || req.headers.referer || "").origin;
+    } catch {
+      /* missing or malformed Origin/Referer */
+    }
+    if (requestOrigin && allowedOrigins.includes(requestOrigin)) return next();
   }
 
   return res.status(403).json({ success: false, error: "Invalid CSRF token" });
