@@ -13,7 +13,7 @@ const ownerId = (req) => String(req.user._id);
 // "/me" is what the frontend calls; an explicit id is only accepted if it is the caller's own.
 const isOwnParam = (req) => req.params.userId === "me" || req.params.userId === ownerId(req);
 const lineKey = (productId, size) => `${productId}|${size ?? ""}`;
-const PRODUCT_SELECT = "name price description image category subCategory stock trackInventory showStringSizePicker stringSizes";
+const PRODUCT_SELECT = "name price description image category subCategory stock trackInventory showStringSizePicker stringSizes isCustomizable processingDaysMin processingDaysMax";
 // Shape one stored cart line for the frontend; string products are priced by their chosen size.
 const toClientItem = (item) => {
   const p = item.productId;
@@ -30,6 +30,9 @@ const toClientItem = (item) => {
       subCategory: p.subCategory,
       stock: p.stock,
       trackInventory: p.trackInventory,
+      isCustomizable: Boolean(p.isCustomizable),
+      processingDaysMin: p.processingDaysMin,
+      processingDaysMax: p.processingDaysMax,
     },
     quantity: item.quantity,
     totalPrice: item.quantity * (price ?? p.price),
