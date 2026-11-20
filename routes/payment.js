@@ -15,6 +15,7 @@ const { enqueueEmail } = require("../utils/emailQueue");
 const { sendConfirmationEmail } = require("../utils/emailService");
 const { notifyAdminNewOrder } = require("../services/whatsappService");
 const { computeShipping } = require("../utils/shippingRates");
+const { isFreeShipping } = require("../utils/launchOffer");
 const { parseStringSize, resolveUnitPrice } = require("../utils/stringSizes");
 
 // Lazily initialize Razorpay so credential changes take effect on restart
@@ -169,13 +170,16 @@ router.post("/", protect, async (req, res) => {
 
     // ── 4. Server-calculated totals ──
     const calculatedSubtotal = orderItems.reduce((sum, i) => sum + i.totalPrice, 0);
-    const shippingCost = computeShipping(
-      orderItems.map((i) => ({
-        weightInGrams: productMap.get(String(i.product._id))?.weightInGrams,
-        quantity: i.quantity,
-      })),
-      finalShippingAddress,
-    );
+    // Launch-week offer: free shipping on orders above ₹999
+    const shippingCost = isFreeShipping(calculatedSubtotal)
+      ? 0
+      : computeShipping(
+          orderItems.map((i) => ({
+            weightInGrams: productMap.get(String(i.product._id))?.weightInGrams,
+            quantity: i.quantity,
+          })),
+          finalShippingAddress,
+        );
     const finalTotalAmount = calculatedSubtotal + shippingCost;
     const amountInPaise = Math.round(finalTotalAmount * 100);
 
