@@ -1,6 +1,7 @@
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const Product = require("../models/Product");
+const { attachItemImages } = require("../utils/orderImages");
 const Order = require("../models/Order");
 const Notification = require("../models/Notification");
 const { cache } = require("../utils/cache");
@@ -199,6 +200,7 @@ const getAllOrders = async (req, res) => {
       .populate("userId", "username email isAdmin")
       .sort({ createdAt: -1 })
       .lean();
+    await attachItemImages(orders);
 
     const result = { success: true, count: orders.length, orders };
     await cache.set("admin:all_orders", result, 30); // 30s cache

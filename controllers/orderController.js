@@ -6,6 +6,7 @@ const User = require("../models/User");
 const { notifyCustomerStatusChange } = require("../services/whatsappService");
 const { resolveUnitPrice } = require("../utils/stringSizes");
 const { releaseCouponUse } = require("../utils/coupons");
+const { attachItemImages } = require("../utils/orderImages");
 const { enqueueEmail } = require("../utils/emailQueue");
 const { sendAdminOrderCancelledEmail } = require("../utils/emailService");
 
@@ -93,6 +94,7 @@ const getUserOrders = async (req, res) => {
         .lean(),
       Order.countDocuments({ userId: req.user._id }),
     ]);
+    await attachItemImages(orders);
 
     res.json({
       success: true,
@@ -124,6 +126,7 @@ const getOrderById = async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
+    await attachItemImages([order]);
     res.json({ success: true, order });
   } catch (error) {
     console.error("Error fetching order:", error);
