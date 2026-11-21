@@ -330,6 +330,7 @@ cron.schedule("0 10 * * *", () => {
 
 // ── WhatsApp retry cron — every 10 minutes, sweep failed/pending logs ─────────
 cron.schedule("*/10 * * * *", async () => {
+  if (process.env.WHATSAPP_ENABLED !== "true") return; // WhatsApp is switched off for now
   try {
     const { retryFailedNotifications } = require("./services/whatsappService");
     const count = await retryFailedNotifications();

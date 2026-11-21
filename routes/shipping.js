@@ -8,6 +8,7 @@
 
 const express = require("express");
 const router = express.Router();
+const { cancelOrder } = require("../controllers/orderController");
 const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
@@ -72,61 +73,9 @@ router.get("/track/:orderId", protect, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/shipping/cancel/:orderId — cancels order locally (no Shiprocket)
+// POST /api/shipping/cancel/:orderId — customer cancels their own order; paid orders are refunded via Razorpay
 // ─────────────────────────────────────────────────────────────────────────────
-router.post("/cancel/:orderId", protect, async (req, res) => {
-  try {
-    if (!validateObjectId(res, req.params.orderId)) return;
-    const order = await Order.findById(req.params.orderId);
-    if (!order) return res.status(404).json({ success: false, error: "Order not found" });
-    if (order.userId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ success: false, error: "Access denied" });
-    }
-    if (!["confirmed", "processing"].includes(order.status)) {
-      return res.status(400).json({
-        success: false,
-        error: `Cannot cancel order with status: ${order.status}`,
-      });
-    }
-
-    // Restore product stock — one bulkWrite round-trip instead of one query per item.
-    // ordered:false so one bad item doesn't block the rest (matches old per-item catch).
-    const restockOps = order.items
-      .filter((item) => item.product?._id)
-      .map((item) => ({
-        updateOne: {
-          filter: { _id: item.product._id },
-          update: { $inc: { stock: item.quantity } },
-        },
-      }));
-    if (restockOps.length) {
-      await Product.bulkWrite(restockOps, { ordered: false }).catch(() => {});
-    }
-
-    order.status = "cancelled";
-    order.timeline.push({
-      status: "cancelled",
-      title: "Order Cancelled",
-      description: "Order was cancelled by the customer",
-      timestamp: new Date(),
-    });
-    await order.save();
-
-    // Notify admins
-    Notification.create({
-      type: "cancelled",
-      message: `Order #${order._id.toString().slice(-6).toUpperCase()} was cancelled by the customer`,
-      orderId: order._id,
-      read: false,
-      meta: { userId: order.userId, totalAmount: order.totalAmount },
-    }).catch(() => {});
-
-    res.json({ success: true, message: "Order cancelled successfully" });
-  } catch (err) {
-    console.error("[Shipping] Cancel error:", err.message);
-    res.status(500).json({ success: false, error: "Failed to cancel order" });
-  }
-});
+router.post("/cancel/:orderId", protect, cancelOrder);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/shipping/return/:orderId — disabled until Shiprocket is integrated

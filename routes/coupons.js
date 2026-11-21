@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
-const { protect, isAdmin } = require("../middlewares/authMiddleware");
+const { protect, isAdmin, optionalAuth } = require("../middlewares/authMiddleware");
+const { evaluateCoupon, CouponError } = require("../utils/coupons");
 const Coupon = require("../models/Coupon");
 const Order = require("../models/Order");
 const { body, validationResult } = require("express-validator");
@@ -67,9 +68,10 @@ router.get("/:id", protect, isAdmin, async (req, res) => {
   }
 });
 
-// Validate coupon code (public)
+// Validate coupon code (public; per-customer limits are checked too when signed in)
 router.post(
   "/validate",
+  optionalAuth,
   [
     body("code").notEmpty().trim().toUpperCase(),
     body("cartTotal").isFloat({ min: 0 }),
@@ -81,48 +83,12 @@ router.post(
         return res.status(400).json({ success: false, errors: errors.array() });
       }
 
-      const { code, cartTotal } = req.body;
-
-      const coupon = await Coupon.findOne({
-        code,
-        isActive: true,
-        validFrom: { $lte: new Date() },
-        $or: [{ validUntil: { $gte: new Date() } }, { validUntil: null }],
+      const cartTotal = Number(req.body.cartTotal);
+      const { coupon, discount } = await evaluateCoupon({
+        code: req.body.code,
+        subtotal: cartTotal,
+        userId: req.user?._id,
       });
-
-      if (!coupon) {
-        return res.status(400).json({
-          success: false,
-          error: "Invalid or expired coupon code",
-        });
-      }
-
-      // Check usage limits
-      if (coupon.maxUses && coupon.useCount >= coupon.maxUses) {
-        return res.status(400).json({
-          success: false,
-          error: "Coupon usage limit exceeded",
-        });
-      }
-
-      // Check minimum cart value
-      if (coupon.minCartValue && cartTotal < coupon.minCartValue) {
-        return res.status(400).json({
-          success: false,
-          error: `Minimum cart value of ${coupon.minCartValue} required`,
-        });
-      }
-
-      // Calculate discount
-      let discount = 0;
-      if (coupon.discountType === "percentage") {
-        discount = (cartTotal * coupon.discountValue) / 100;
-        if (coupon.maxDiscount) {
-          discount = Math.min(discount, coupon.maxDiscount);
-        }
-      } else {
-        discount = coupon.discountValue;
-      }
 
       res.status(200).json({
         success: true,
@@ -130,15 +96,19 @@ router.post(
           code: coupon.code,
           discountType: coupon.discountType,
           discountValue: coupon.discountValue,
+          maxDiscount: coupon.maxDiscount ?? null,
+          minCartValue: coupon.minCartValue || 0,
           discount,
           finalTotal: Math.max(0, cartTotal - discount),
         },
       });
     } catch (error) {
+      if (error instanceof CouponError) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
       res.status(500).json({
         success: false,
         error: "Failed to validate coupon",
-        details: error.message,
       });
     }
   },

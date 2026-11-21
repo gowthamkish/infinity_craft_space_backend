@@ -39,7 +39,7 @@ Defective or wrong items: we cover return shipping and offer a full refund or fr
 How to initiate: go to My Orders → select the item → click Return/Refund. Our team responds within 24 hours.
 Refunds are processed within 5-7 business days after we receive the returned item.
 Refund method: same as original payment (UPI/card) or store credit (your choice).
-COD orders: refunds are issued as store credit or NEFT transfer (provide bank details).`,
+Cancellations: you can cancel an order yourself from My Orders until it is shipped. Paid orders cancelled this way are refunded in full to the original payment method (usually 5-7 business days). Once shipped, you can request a return after delivery.`,
   },
   {
     topic: "shipping",
@@ -50,7 +50,6 @@ Metro cities (Mumbai, Delhi, Bangalore, Chennai, Hyderabad, Kolkata): typically 
 North-east and remote areas: up to 10 business days.
 Shipping is charged on every order. The charge is calculated at checkout from the delivery distance (zone) and the weight of your parcel; there is no standing free-shipping threshold. Launch offer: shipping is FREE on orders above ₹999 from 20 Nov 2026 until 27 Nov 2026, 8:00 AM IST.
 Tracking: once shipped you receive a tracking link via SMS and email. You can also track in My Orders.
-COD (Cash on Delivery): available on orders up to ₹3000.
 We ship Monday to Saturday, excluding public holidays.`,
   },
   {
@@ -67,7 +66,7 @@ Changes after order: we cannot modify customization details once production has 
   {
     topic: "payment",
     title: "Payment Options & Security",
-    content: `Infinity Craft Space accepts: UPI (PhonePe, GPay, Paytm), Credit/Debit cards (Visa, Mastercard, RuPay), Net Banking, EMI (on orders above ₹3000), and Cash on Delivery (up to ₹3000).
+    content: `Infinity Craft Space accepts: UPI (PhonePe, GPay, Paytm), Credit/Debit cards (Visa, Mastercard, RuPay), Net Banking and EMI (on orders above ₹3000). Cash on Delivery (COD) is NOT available — all orders are prepaid online.
 Payments are processed securely via Razorpay — your card details are never stored on our servers.
 EMI options available: 3, 6, 9, 12 months (bank-specific interest rates apply).
 Failed payment: if your payment fails but money was deducted, it is automatically reversed within 5-7 business days by your bank.

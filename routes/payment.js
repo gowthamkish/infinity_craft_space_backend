@@ -12,10 +12,11 @@ const Notification = require("../models/Notification");
 const { protect } = require("../middlewares/authMiddleware");
 // const shiprocket = require("../services/shiprocketService"); // COMMENTED OUT — Shiprocket will be re-enabled in future
 const { enqueueEmail } = require("../utils/emailQueue");
-const { sendConfirmationEmail } = require("../utils/emailService");
+const { sendOrderConfirmation, sendAdminNewOrderEmail } = require("../utils/emailService");
 const { notifyAdminNewOrder } = require("../services/whatsappService");
 const { computeShipping } = require("../utils/shippingRates");
 const { isFreeShipping } = require("../utils/launchOffer");
+const { evaluateCoupon, recordCouponUse, CouponError } = require("../utils/coupons");
 const { parseStringSize, resolveUnitPrice } = require("../utils/stringSizes");
 
 // Lazily initialize Razorpay so credential changes take effect on restart
@@ -38,7 +39,7 @@ function getRazorpay() {
 // ₹1 for any cart).
 router.post("/", protect, async (req, res) => {
   try {
-    const { shippingAddress, items, shippingCourierId = null } = req.body;
+    const { shippingAddress, items, shippingCourierId = null, couponCode = null } = req.body;
     const userId = req.user._id;
 
     // ── 1. Normalise requested lines: [{ productId, quantity }] (dupes merged) ──
@@ -48,6 +49,7 @@ router.post("/", protect, async (req, res) => {
         productId: String(item.productId || item.product?._id || ""),
         quantity: Number(item.quantity ?? 1),
         stringSize: parseStringSize(item.stringSize ?? item.selectedStringSize),
+        customNote: String(item.customNote || "").trim().slice(0, 1000),
       }));
     } else {
       // No items sent — fall back to the user's server-side cart
@@ -56,6 +58,7 @@ router.post("/", protect, async (req, res) => {
         productId: String(i.productId || ""),
         quantity: Number(i.quantity ?? 1),
         stringSize: parseStringSize(i.stringSize),
+        customNote: String(i.customNote || "").trim().slice(0, 1000),
       }));
     }
 
@@ -68,7 +71,7 @@ router.post("/", protect, async (req, res) => {
 
     const qtyByProduct = new Map(); // total qty per product (stock is shared across sizes)
     const lines = new Map(); // `${productId}|${size}` → { productId, stringSize, qty }
-    for (const { productId, quantity, stringSize } of requested) {
+    for (const { productId, quantity, stringSize, customNote } of requested) {
       if (!mongoose.Types.ObjectId.isValid(productId)) {
         return res.status(400).json({ success: false, message: "Invalid product in cart" });
       }
@@ -77,8 +80,9 @@ router.post("/", protect, async (req, res) => {
       }
       qtyByProduct.set(productId, (qtyByProduct.get(productId) || 0) + quantity);
       const key = `${productId}|${stringSize ?? ""}`;
-      const line = lines.get(key) || { productId, stringSize, qty: 0 };
+      const line = lines.get(key) || { productId, stringSize, qty: 0, notes: [] };
       line.qty += quantity;
+      if (customNote) line.notes.push(customNote);
       lines.set(key, line);
     }
 
@@ -116,7 +120,7 @@ router.post("/", protect, async (req, res) => {
     }
 
     // One order line per product + string size, priced from the database
-    for (const { productId, stringSize, qty } of lines.values()) {
+    for (const { productId, stringSize, qty, notes } of lines.values()) {
       const dbProduct = productMap.get(productId);
       if (!dbProduct || stockErrors.some((e) => e.productId === productId)) continue;
       const resolved = resolveUnitPrice(dbProduct, stringSize);
@@ -135,6 +139,7 @@ router.post("/", protect, async (req, res) => {
         quantity: qty,
         selectedStringSize: resolved.stringSize,
         totalPrice: resolved.price * qty,
+        customNote: notes.join(" | ").slice(0, 1000),
       });
     }
 
@@ -170,8 +175,26 @@ router.post("/", protect, async (req, res) => {
 
     // ── 4. Server-calculated totals ──
     const calculatedSubtotal = orderItems.reduce((sum, i) => sum + i.totalPrice, 0);
-    // Launch-week offer: free shipping on orders above ₹999
-    const shippingCost = isFreeShipping(calculatedSubtotal)
+
+    // Coupon — re-checked and priced here; the client only sends the code
+    let discount = { code: null, amount: 0 };
+    if (couponCode) {
+      try {
+        const { coupon, discount: amount } = await evaluateCoupon({
+          code: couponCode, subtotal: calculatedSubtotal, userId,
+        });
+        discount = { code: coupon.code, type: coupon.discountType, amount };
+      } catch (err) {
+        if (err instanceof CouponError) {
+          return res.status(400).json({ success: false, couponError: true, message: err.message });
+        }
+        throw err;
+      }
+    }
+    const discountedSubtotal = Math.round((calculatedSubtotal - discount.amount) * 100) / 100;
+
+    // Launch-week offer: free shipping on orders above ₹999 (after any coupon discount)
+    const shippingCost = isFreeShipping(discountedSubtotal)
       ? 0
       : computeShipping(
           orderItems.map((i) => ({
@@ -180,7 +203,7 @@ router.post("/", protect, async (req, res) => {
           })),
           finalShippingAddress,
         );
-    const finalTotalAmount = calculatedSubtotal + shippingCost;
+    const finalTotalAmount = Math.round((discountedSubtotal + shippingCost) * 100) / 100;
     const amountInPaise = Math.round(finalTotalAmount * 100);
 
     if (!(amountInPaise > 0)) {
@@ -210,7 +233,7 @@ router.post("/", protect, async (req, res) => {
       items: orderItems,
       subtotal: calculatedSubtotal,
       shipping: shippingCost,
-      discount: { couponCode: null, amount: 0 },
+      discount,
       totalAmount: finalTotalAmount,
       currency: "INR",
       shippingAddress: finalShippingAddress,
@@ -230,6 +253,8 @@ router.post("/", protect, async (req, res) => {
         amount: finalTotalAmount,
         amountInPaise,
         shipping: shippingCost,
+        discount: discount.amount,
+        couponCode: discount.code,
         currency: "INR",
       },
       razorpayKeyId: process.env.RAZORPAY_KEY_ID,
@@ -270,9 +295,17 @@ function runPostPaymentActions(confirmedOrder) {
       });
 
       const user = await User.findById(confirmedOrder.userId).lean();
+      // Customer confirmation + full order details to the shop inbox (SHOP_EMAIL)
       if (user?.email) {
-        enqueueEmail(() => sendConfirmationEmail(user, confirmedOrder));
+        enqueueEmail(async () => {
+          const ok = await sendOrderConfirmation(confirmedOrder, user);
+          if (ok) await Order.updateOne({ _id: confirmedOrder._id }, { $set: { "emailsSent.orderConfirmation": true } });
+        });
       }
+      enqueueEmail(async () => {
+        const ok = await sendAdminNewOrderEmail(confirmedOrder, user);
+        if (!ok) throw new Error(`Admin new-order email failed for ${confirmedOrder._id}`);
+      });
 
       notifyAdminNewOrder(confirmedOrder, user).catch((e) =>
         console.error("[WhatsApp] Admin notification error:", e.message),
@@ -373,6 +406,10 @@ async function confirmOrderPayment({
         { new: true, session },
       );
       if (!confirmedOrder) return; // lost the race — nothing else to do
+
+      if (confirmedOrder.discount?.code) {
+        await recordCouponUse(confirmedOrder.discount.code, confirmedOrder.userId, session);
+      }
 
       for (const item of confirmedOrder.items) {
         const pid = item.product?._id;

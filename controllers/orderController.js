@@ -5,6 +5,12 @@ const Notification = require("../models/Notification");
 const User = require("../models/User");
 const { notifyCustomerStatusChange } = require("../services/whatsappService");
 const { resolveUnitPrice } = require("../utils/stringSizes");
+const { releaseCouponUse } = require("../utils/coupons");
+const { enqueueEmail } = require("../utils/emailQueue");
+const { sendAdminOrderCancelledEmail } = require("../utils/emailService");
+
+// Customers may cancel a paid order until it is shipped.
+const CUSTOMER_CANCELLABLE = ["confirmed", "processing"];
 
 const createOrder = async (req, res) => {
   try {
@@ -318,4 +324,140 @@ const downloadInvoice = async (req, res) => {
   }
 };
 
-module.exports = { createOrder, getUserOrders, getOrderById, updateOrderStatus, downloadInvoice, getStatusUpdates, ackStatusUpdates };
+// POST /api/shipping/cancel/:orderId — the customer cancels their own order before it is shipped.
+// Paid orders are refunded in full to the original payment method via Razorpay.
+const cancelOrder = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+    const reason = String(req.body?.reason || "").trim().slice(0, 500);
+
+    const existing = await Order.findOne({ _id: orderId, userId: req.user._id });
+    if (!existing) return res.status(404).json({ success: false, message: "Order not found" });
+    if (!CUSTOMER_CANCELLABLE.includes(existing.status) || existing.paymentStatus !== "completed") {
+      const shipped = ["shipped", "out_for_delivery", "delivered", "returned"].includes(existing.status);
+      return res.status(400).json({
+        success: false,
+        message: existing.status === "cancelled"
+          ? "This order is already cancelled"
+          : shipped
+            ? "This order has already been shipped and can no longer be cancelled. You can request a return after delivery."
+            : "This order cannot be cancelled online. Please contact us for help.",
+      });
+    }
+
+    const wasPaid = existing.paymentStatus === "completed";
+    const now = new Date();
+
+    // Atomic claim: only flips if the order is still cancellable (guards against a concurrent admin update)
+    const order = await Order.findOneAndUpdate(
+      { _id: orderId, userId: req.user._id, status: { $in: CUSTOMER_CANCELLABLE } },
+      {
+        $set: {
+          status: "cancelled",
+          updatedAt: now,
+          cancellation: { by: "customer", reason, at: now, refundStatus: wasPaid ? "initiated" : "not_required" },
+        },
+        $push: {
+          timeline: {
+            status: "cancelled",
+            title: "Order Cancelled",
+            description: reason ? `Cancelled by customer: ${reason}` : "Cancelled by customer",
+            timestamp: now,
+          },
+        },
+      },
+      { new: true },
+    );
+    if (!order) {
+      return res.status(409).json({ success: false, message: "This order's status just changed. Please refresh and try again." });
+    }
+
+    let refundFailed = false;
+    if (wasPaid) {
+      // Stock was deducted when payment was confirmed — put it back
+      const restoreOps = order.items
+        .filter((item) => item.product?._id)
+        .map((item) => ({
+          updateOne: {
+            filter: { _id: item.product._id, trackInventory: true },
+            update: { $inc: { stock: item.quantity }, $set: { updatedAt: now } },
+          },
+        }));
+      if (restoreOps.length) await Product.bulkWrite(restoreOps).catch((e) => console.warn("[Cancel] Stock restore failed:", e.message));
+
+      if (order.discount?.code) {
+        await releaseCouponUse(order.discount.code, order.userId).catch((e) => console.warn("[Cancel] Coupon release failed:", e.message));
+      }
+
+      // Full refund to the original payment method
+      try {
+        const Razorpay = require("razorpay");
+        const rzp = new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET });
+        const refund = await rzp.payments.refund(order.razorpayPaymentId, {
+          amount: Math.round(order.totalAmount * 100),
+          notes: { orderId: String(order._id), reason: "Cancelled by customer" },
+        });
+        await Order.updateOne(
+          { _id: order._id },
+          {
+            $set: { paymentStatus: "refunded", "cancellation.refundId": refund.id },
+            $push: {
+              timeline: {
+                status: "refunded",
+                title: "Refund Initiated",
+                description: `Refund of ₹${order.totalAmount} initiated to your original payment method (usually 5–7 business days)`,
+                timestamp: new Date(),
+                metadata: { refundId: refund.id },
+              },
+            },
+          },
+        );
+      } catch (refundErr) {
+        refundFailed = true;
+        console.error("[Cancel] Razorpay refund failed:", refundErr?.error?.description || refundErr.message);
+        await Order.updateOne({ _id: order._id }, { $set: { "cancellation.refundStatus": "failed" } });
+        await Notification.create({
+          type: "system",
+          message: `⚠️ Refund FAILED for customer-cancelled order #${order._id.toString().slice(-6).toUpperCase()} (₹${order.totalAmount}). Please refund manually in Razorpay.`,
+          orderId: order._id,
+          read: false,
+        }).catch(() => {});
+      }
+    }
+
+    Notification.create({
+      type: "order_status_update",
+      message: `Order #${order._id.toString().slice(-6).toUpperCase()} — Cancelled by customer${reason ? `: ${reason}` : ""}`,
+      orderId: order._id,
+      read: false,
+      meta: { orderId: order._id, userId: order.userId, previousStatus: existing.status, newStatus: "cancelled", totalAmount: order.totalAmount },
+    }).catch(() => {});
+
+    const updatedOrder = await Order.findById(order._id);
+    enqueueEmail(async () => {
+      const customer = await User.findById(order.userId).lean();
+      await sendAdminOrderCancelledEmail(updatedOrder, customer);
+    });
+    try {
+      require("../routes/sse").pushOrderUpdate(String(order.userId), updatedOrder, existing.status);
+    } catch (e) { /* SSE is best-effort */ }
+
+    res.json({
+      success: true,
+      order: updatedOrder,
+      message: !wasPaid
+        ? "Your order has been cancelled."
+        : refundFailed
+          ? "Your order has been cancelled. We couldn't start the refund automatically — our team will refund you within 2 business days."
+          : `Your order has been cancelled. A refund of ₹${order.totalAmount} has been initiated and usually reaches you in 5–7 business days.`,
+    });
+  } catch (error) {
+    console.error("Error cancelling order:", error);
+    res.status(500).json({ success: false, message: "Failed to cancel order" });
+  }
+};
+
+module.exports = { cancelOrder, createOrder, getUserOrders, getOrderById, updateOrderStatus, downloadInvoice, getStatusUpdates, ackStatusUpdates };

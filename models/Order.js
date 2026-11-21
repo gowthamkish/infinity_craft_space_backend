@@ -33,6 +33,7 @@ const OrderSchema = new mongoose.Schema(
         },
         quantity: { type: Number, required: true },
         selectedStringSize: { type: Number, default: null }, // inches, for Jasmine/Mullai string products
+        customNote: { type: String, default: "", maxlength: 1000 }, // customer's personalisation instructions
         totalPrice: { type: Number, required: true },
         variant: {
           color: String,
@@ -144,6 +145,15 @@ const OrderSchema = new mongoose.Schema(
       status: { type: String },
       previousStatus: { type: String },
       at: { type: Date },
+    },
+
+    // Set when the customer cancels the order themselves
+    cancellation: {
+      by: { type: String, enum: ["customer", "admin"] },
+      reason: { type: String, maxlength: 500 },
+      at: { type: Date },
+      refundId: { type: String },
+      refundStatus: { type: String, enum: ["not_required", "initiated", "failed"] },
     },
 
     notes: String,

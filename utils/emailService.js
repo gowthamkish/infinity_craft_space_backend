@@ -154,33 +154,201 @@ const emailTemplates = {
   }),
 };
 
-// Send email
+// ── Delivery ─────────────────────────────────────────────────────────────────
+// Brevo's HTTPS API is used when BREVO_API_KEY is set (works on hosts that block SMTP, e.g. Render free tier).
+// Otherwise falls back to SMTP via nodemailer (EMAIL_USER / EMAIL_PASSWORD).
+const SHOP_EMAIL = () => process.env.SHOP_EMAIL || "infinitycraftspacejsag@gmail.com";
+
+function senderIdentity() {
+  return {
+    email: process.env.BREVO_SENDER_EMAIL || SHOP_EMAIL(),
+    name: process.env.BREVO_SENDER_NAME || "Infinity Craft Space",
+  };
+}
+
+async function sendViaBrevo({ to, subject, html, text, replyTo }) {
+  const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean).map((email) => ({ email }));
+  const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: { "api-key": process.env.BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({
+      sender: senderIdentity(),
+      to: recipients,
+      subject,
+      htmlContent: html,
+      ...(text ? { textContent: text } : {}),
+      ...(replyTo ? { replyTo: { email: replyTo } } : {}),
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Brevo ${res.status}: ${body.slice(0, 300)}`);
+  }
+}
+
+// Send email — returns true on success, false otherwise (never throws)
 exports.sendEmail = async (email, template, variables = {}) => {
   try {
+    if (!email || (Array.isArray(email) && email.length === 0)) return false;
+
+    if (process.env.BREVO_API_KEY) {
+      await sendViaBrevo({ to: email, ...template });
+      return true;
+    }
+
     if (!process.env.EMAIL_USER) {
-      console.warn("Email service not configured");
+      console.warn("Email service not configured (set BREVO_API_KEY, or EMAIL_USER/EMAIL_PASSWORD for SMTP)");
       return false;
     }
 
-    const mailOptions = {
+    const { replyTo, ...rest } = template;
+    await transporter.sendMail({
       from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
       to: email,
-      ...template,
-    };
-
-    await transporter.sendMail(mailOptions);
+      ...(replyTo ? { replyTo } : {}),
+      ...rest,
+    });
     return true;
   } catch (error) {
-    console.error("Error sending email:", error);
+    console.error("Error sending email:", error.message || error);
     return false;
   }
 };
 
+// ── Order emails (customer confirmation + shop notifications) ───────────────
+const esc = (v) =>
+  String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const inr = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const shortId = (order) => String(order._id).slice(-6).toUpperCase();
+const istTime = (d) =>
+  new Date(d || Date.now()).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+
+function itemsTable(order) {
+  const rows = (order.items || []).map((i) => `
+    <tr>
+      <td style="padding:8px;border-bottom:1px solid #eee;">
+        <strong>${esc(i.product?.name || "Product")}</strong>
+        ${i.selectedStringSize ? `<br/><small style="color:#666;">Size: ${esc(i.selectedStringSize)} inch</small>` : ""}
+        ${i.customNote ? `<br/><small style="color:#b45309;"><b>Customisation:</b> ${esc(i.customNote)}</small>` : ""}
+      </td>
+      <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">${esc(i.quantity)}</td>
+      <td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">${inr(i.product?.price)}</td>
+      <td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">${inr(i.totalPrice)}</td>
+    </tr>`).join("");
+  const d = order.discount?.amount > 0
+    ? `<tr><td colspan="3" style="padding:4px 8px;text-align:right;">Coupon${order.discount.code ? ` (${esc(order.discount.code)})` : ""}</td><td style="padding:4px 8px;text-align:right;color:#15803d;">−${inr(order.discount.amount)}</td></tr>`
+    : "";
+  return `
+  <table style="width:100%;border-collapse:collapse;font-size:14px;">
+    <thead><tr style="background:#f5f5f5;">
+      <th style="padding:8px;text-align:left;">Item</th><th style="padding:8px;">Qty</th>
+      <th style="padding:8px;text-align:right;">Price</th><th style="padding:8px;text-align:right;">Total</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot>
+      <tr><td colspan="3" style="padding:8px 8px 4px;text-align:right;">Subtotal</td><td style="padding:8px 8px 4px;text-align:right;">${inr(order.subtotal)}</td></tr>
+      ${d}
+      <tr><td colspan="3" style="padding:4px 8px;text-align:right;">Shipping</td><td style="padding:4px 8px;text-align:right;">${order.shipping ? inr(order.shipping) : "FREE"}</td></tr>
+      <tr><td colspan="3" style="padding:8px;text-align:right;font-weight:bold;font-size:16px;">Total paid</td><td style="padding:8px;text-align:right;font-weight:bold;font-size:16px;">${inr(order.totalAmount)}</td></tr>
+    </tfoot>
+  </table>`;
+}
+
+function addressBlock(order) {
+  const a = order.shippingAddress || {};
+  return `${esc(a.street)}<br/>${esc(a.city)}, ${esc(a.state)} – ${esc(a.zipCode)}<br/>${esc(a.country || "India")}${a.phone ? `<br/>📞 ${esc(a.phone)}` : ""}`;
+}
+
+const orderShell = (title, inner) => `
+  <div style="font-family:Arial,Helvetica,sans-serif;max-width:640px;margin:0 auto;color:#222;">
+    <div style="background:#1f1a17;color:#f7dc8a;padding:16px 20px;border-radius:8px 8px 0 0;">
+      <strong style="font-size:18px;">Infinity Craft Space</strong><br/><span style="color:#fff;">${title}</span>
+    </div>
+    <div style="border:1px solid #eee;border-top:0;padding:20px;border-radius:0 0 8px 8px;">${inner}</div>
+  </div>`;
+
+const orderEmails = {
+  customerConfirmation: (order, user) => {
+    const frontendUrl = process.env.FRONTEND_URL || "https://www.infinitycraftspace.com";
+    return {
+      subject: `Order confirmed – #${shortId(order)} | Infinity Craft Space`,
+      replyTo: SHOP_EMAIL(),
+      html: orderShell("Thank you for your order!", `
+        <p>Hi ${esc(user.username || user.name || "there")},</p>
+        <p>We've received your payment and your order is confirmed. Here are the details:</p>
+        <p><strong>Order:</strong> #${shortId(order)}<br/><strong>Placed on:</strong> ${istTime(order.createdAt)}</p>
+        ${itemsTable(order)}
+        <h3 style="margin-top:24px;">Shipping to</h3>
+        <p>${addressBlock(order)}</p>
+        <p style="margin:24px 0;">
+          <a href="${frontendUrl}/orders" style="background:#e8623d;color:#fff;padding:10px 20px;text-decoration:none;border-radius:5px;">View my order</a>
+        </p>
+        <p style="color:#666;font-size:12px;">We'll let you know when it ships. Questions? Just reply to this email.</p>`),
+    };
+  },
+
+  adminNewOrder: (order, user) => {
+    const p = order.razorpayPaymentId ? `Razorpay · ${esc(order.razorpayPaymentId)}` : esc(order.paymentMethod || "prepaid");
+    const hasCustom = (order.items || []).some((i) => i.customNote);
+    return {
+      subject: `🛍️ New order #${shortId(order)} – ${inr(order.totalAmount)} – ${user?.username || user?.name || "Customer"}`,
+      ...(user?.email ? { replyTo: user.email } : {}),
+      html: orderShell(`New order received${hasCustom ? " · contains customisation" : ""}`, `
+        <table style="width:100%;font-size:14px;margin-bottom:16px;">
+          <tr><td style="color:#666;width:140px;">Order ID</td><td><strong>#${shortId(order)}</strong> <small style="color:#999;">(${esc(order._id)})</small></td></tr>
+          <tr><td style="color:#666;">Placed on</td><td>${istTime(order.createdAt)} IST</td></tr>
+          <tr><td style="color:#666;">Payment</td><td>${p} – <strong style="color:#15803d;">Paid</strong></td></tr>
+        </table>
+        <h3>Customer</h3>
+        <table style="width:100%;font-size:14px;margin-bottom:16px;">
+          <tr><td style="color:#666;width:140px;">Name</td><td>${esc(user?.username || user?.name || "—")}</td></tr>
+          <tr><td style="color:#666;">Email</td><td>${user?.email ? `<a href="mailto:${esc(user.email)}">${esc(user.email)}</a>` : "—"}</td></tr>
+          <tr><td style="color:#666;">Phone</td><td>${esc(order.shippingAddress?.phone || user?.phone || "—")}</td></tr>
+        </table>
+        <h3>Ship to</h3>
+        <p>${addressBlock(order)}</p>
+        <h3>Items</h3>
+        ${itemsTable(order)}
+        <p style="color:#666;font-size:12px;margin-top:20px;">Reply to this email to contact the customer directly.</p>`),
+    };
+  },
+
+  adminCancelled: (order, user) => {
+    const rs = order.cancellation?.refundStatus;
+    const refund = order.paymentStatus === "refunded"
+      ? `<strong style="color:#15803d;">Refund initiated</strong> (${esc(order.cancellation?.refundId || "")})`
+      : rs === "failed"
+        ? `<strong style="color:#b91c1c;">Refund FAILED – please refund ${inr(order.totalAmount)} manually in the Razorpay dashboard</strong>`
+        : esc(rs || "—");
+    return {
+      subject: `❌ Order #${shortId(order)} cancelled by customer – ${inr(order.totalAmount)}`,
+      ...(user?.email ? { replyTo: user.email } : {}),
+      html: orderShell("Order cancelled by customer", `
+        <p><strong>Order:</strong> #${shortId(order)}<br/>
+           <strong>Customer:</strong> ${esc(user?.username || user?.name || "—")} (${esc(user?.email || "—")}, ${esc(order.shippingAddress?.phone || "—")})<br/>
+           <strong>Cancelled at:</strong> ${istTime(order.cancellation?.at)} IST<br/>
+           <strong>Reason:</strong> ${esc(order.cancellation?.reason || "Not given")}<br/>
+           <strong>Refund:</strong> ${refund}</p>
+        ${itemsTable(order)}
+        <p style="color:#666;font-size:12px;">Stock for these items has been restored.</p>`),
+    };
+  },
+};
+
 // Order-related emails
 exports.sendOrderConfirmation = async (order, user) => {
-  const template = emailTemplates.orderConfirmation(order, user);
-  return exports.sendEmail(user.email, template);
+  if (!user?.email) return false;
+  return exports.sendEmail(user.email, orderEmails.customerConfirmation(order, user));
 };
+
+/** New paid order → shop inbox (SHOP_EMAIL), with full order + customer details. */
+exports.sendAdminNewOrderEmail = async (order, user) =>
+  exports.sendEmail(SHOP_EMAIL(), orderEmails.adminNewOrder(order, user));
+
+/** Customer cancelled an order → shop inbox, with refund status. */
+exports.sendAdminOrderCancelledEmail = async (order, user) =>
+  exports.sendEmail(SHOP_EMAIL(), orderEmails.adminCancelled(order, user));
 
 exports.sendShippingUpdate = async (
   order,
@@ -325,7 +493,7 @@ exports.sendLaunchAnnouncement = async (email, unsubscribeUrl) => {
 // Batch send emails (admin notifications)
 exports.sendAdminNotification = async (subject, html) => {
   try {
-    return exports.sendEmail(process.env.ADMIN_EMAIL, { subject, html });
+    return exports.sendEmail(SHOP_EMAIL(), { subject, html });
   } catch (error) {
     console.error("Error sending admin notification:", error);
     return false;

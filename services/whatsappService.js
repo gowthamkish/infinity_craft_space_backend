@@ -123,8 +123,12 @@ const STATUS_TEMPLATE_MAP = {
 
 // ─── Core API call ────────────────────────────────────────────────────────────
 
+// WhatsApp notifications are switched off until the Meta templates are approved and set up.
+// Set WHATSAPP_ENABLED=true (plus the WHATSAPP_* credentials) to turn them on.
+const isEnabled = () => process.env.WHATSAPP_ENABLED === "true";
+
 function isConfigured() {
-  return !!(
+  return isEnabled() && !!(
     process.env.WHATSAPP_ACCESS_TOKEN &&
     process.env.WHATSAPP_PHONE_NUMBER_ID
   );
@@ -272,6 +276,7 @@ async function sendWhatsApp({ to, templateKey, templateParams, orderId, userId, 
  * Notify admin when a customer places a new order.
  */
 async function notifyAdminNewOrder(order, user) {
+  if (!isEnabled()) return;
   const adminPhone = process.env.WHATSAPP_ADMIN_PHONE;
   if (!adminPhone) {
     console.warn("[WhatsApp] WHATSAPP_ADMIN_PHONE not set — skipping admin notification");
@@ -312,6 +317,7 @@ async function notifyAdminNewOrder(order, user) {
  * Notify customer when admin updates their order status.
  */
 async function notifyCustomerStatusChange(order, user, newStatus) {
+  if (!isEnabled()) return;
   const templateKey = STATUS_TEMPLATE_MAP[newStatus];
   if (!templateKey) return; // No template for this status (e.g. "pending")
 
@@ -359,6 +365,7 @@ function templateKeyForName(name) {
 }
 
 async function retryFailedNotifications() {
+  if (!isEnabled()) return 0;
   const due = await WhatsAppLog.find({
     status: { $in: ["pending", "failed"] },
     attempts: { $lt: 3 },
@@ -388,6 +395,7 @@ module.exports = {
   sendWhatsApp,
   normalizePhone,
   isConfigured,
+  isEnabled,
   STATUS_TEMPLATE_MAP,
   TEMPLATES,
 };
