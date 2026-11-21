@@ -224,6 +224,26 @@ router.post("/", protect, async (req, res) => {
     } catch (rzpErr) {
       // Razorpay API errors carry { statusCode, error: { code, description } }; config/network errors are plain Errors.
       const notConfigured = /RAZORPAY_KEY_(ID|SECRET)/.test(rzpErr?.message || "");
+
+      // The SDK drops the response body when Razorpay doesn't send its usual JSON error (e.g. a 403 from a
+      // firewall). Repeat a harmless read-only call ourselves to see what is really coming back.
+      let probe = null;
+      if (!notConfigured && !rzpErr?.error?.description) {
+        try {
+          const auth = Buffer.from(
+            `${String(process.env.RAZORPAY_KEY_ID || "").trim()}:${String(process.env.RAZORPAY_KEY_SECRET || "").trim()}`,
+          ).toString("base64");
+          const r = await fetch("https://api.razorpay.com/v1/orders?count=1", {
+            headers: { Authorization: `Basic ${auth}` },
+            signal: AbortSignal.timeout(8000),
+          });
+          const body = (await r.text()).replace(/\s+/g, " ").slice(0, 300);
+          probe = { status: r.status, server: r.headers.get("server"), body };
+        } catch (probeErr) {
+          probe = { error: probeErr.message };
+        }
+        console.error("[Payment] Razorpay probe (GET /v1/orders):", probe);
+      }
       console.error("[Payment] Razorpay order creation failed", {
         statusCode: rzpErr?.statusCode,
         code: rzpErr?.error?.code,
@@ -240,6 +260,8 @@ router.post("/", protect, async (req, res) => {
             rzpErr?.message ||
             (rzpErr?.statusCode ? `Razorpay responded with HTTP ${rzpErr.statusCode}` : "Payment gateway unavailable"),
         code: rzpErr?.error?.code || null,
+        // Temporary diagnostic — contains no secrets (status, server header, start of Razorpay's reply)
+        ...(probe ? { probe } : {}),
       });
     }
 
