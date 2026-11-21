@@ -21,8 +21,10 @@ const { parseStringSize, resolveUnitPrice } = require("../utils/stringSizes");
 
 // Lazily initialize Razorpay so credential changes take effect on restart
 function getRazorpay() {
-  const key_id = process.env.RAZORPAY_KEY_ID;
-  const key_secret = process.env.RAZORPAY_KEY_SECRET;
+  // Trim stray spaces/quotes/newlines that often sneak in when pasting into a host's env editor
+  const clean = (v) => String(v || "").trim().replace(/^["']|["']$/g, "");
+  const key_id = clean(process.env.RAZORPAY_KEY_ID);
+  const key_secret = clean(process.env.RAZORPAY_KEY_SECRET);
   if (!key_id || !key_secret) {
     throw new Error(
       "RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET is missing from environment",
@@ -220,10 +222,21 @@ router.post("/", protect, async (req, res) => {
         payment_capture: 1,
       });
     } catch (rzpErr) {
-      console.error("[Payment] Razorpay error:", rzpErr?.error || rzpErr?.message);
-      return res.status(502).json({
+      // Razorpay API errors carry { statusCode, error: { code, description } }; config/network errors are plain Errors.
+      const notConfigured = /RAZORPAY_KEY_(ID|SECRET)/.test(rzpErr?.message || "");
+      console.error("[Payment] Razorpay order creation failed", {
+        statusCode: rzpErr?.statusCode,
+        code: rzpErr?.error?.code,
+        description: rzpErr?.error?.description,
+        message: rzpErr?.message,
+        keyMode: String(process.env.RAZORPAY_KEY_ID || "").slice(0, 9) || "(missing)", // rzp_live_ / rzp_test_
+        amountInPaise,
+      });
+      return res.status(notConfigured ? 503 : 502).json({
         message: "Payment gateway error. Please try again.",
-        detail: rzpErr?.error?.description || "Payment gateway unavailable",
+        detail: notConfigured
+          ? "Payment gateway is not configured on the server"
+          : rzpErr?.error?.description || rzpErr?.message || "Payment gateway unavailable",
       });
     }
 
