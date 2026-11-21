@@ -15,7 +15,6 @@ const Product = require("../models/Product");
 const Category = require("../models/Category");
 const BlogPost = require("../models/BlogPost");
 const { uniqueSlug, readingMinutes, cleanTags } = require("../utils/blogHelpers");
-const { OFFER_START, OFFER_END, FREE_SHIPPING_ABOVE } = require("../utils/launchOffer");
 
 // Claude Opus 5.5. Override with BLOG_AGENT_MODEL (e.g. a cheaper model) without a code change.
 const MODEL = process.env.BLOG_AGENT_MODEL || "claude-opus-5-5";
@@ -24,12 +23,12 @@ const MAX_NUDGES = 2;
 
 /** Content pillars — the agent rotates through them so the blog stays varied. */
 const PILLARS = [
-  { id: "craft", label: "The craft explained", brief: "How a type of jewellery/craft piece is made: materials, techniques and what makes it special. Stay general and educational — do not claim anything about OUR workshop or artisans beyond what tools tell you." },
+  { id: "heritage", label: "Heritage & meaning", brief: "The story behind a style of jewellery or craft: where it comes from, its cultural meaning, when and why it is worn, how traditions have evolved. NEVER explain how pieces are made." },
   { id: "care", label: "Care guide", brief: "Practical care, storage and cleaning advice for a kind of piece we sell (e.g. oxidised silver, kundan, resin, string/flower jewellery)." },
   { id: "gifting", label: "Gifting guide", brief: "A gifting guide for an occasion or recipient, recommending real products from the catalog." },
   { id: "style", label: "Style guide", brief: "How to style or wear a kind of piece for different outfits and occasions, featuring real products from the catalog." },
   { id: "season", label: "Festival & season special", brief: "A timely post tied to an upcoming Indian festival, wedding season or occasion, with relevant real products." },
-  { id: "spotlight", label: "Collection spotlight", brief: "A story-led spotlight on one category or collection from the catalog: what it is, who it suits, how to choose." },
+  { id: "spotlight", label: "Collection spotlight", brief: "A story-led spotlight on one category or collection from the catalog: what it is, who it suits, how to choose the right one as a buyer (size, colour, occasion)." },
 ];
 
 const SYSTEM_PROMPT = `You are the blog writer for Infinity Craft Space, an Indian handcraft and jewellery brand based in Bangalore that ships across India. You write the "Behind the Craft" blog. Readers are Indian shoppers looking for handmade jewellery and craft gifts; the posts should help them (care, styling, gifting, understanding craft) and also help the shop's pages rank on Google.
@@ -41,9 +40,13 @@ How you work
 
 Honesty rules (the most important part)
 - Everything about Infinity Craft Space — its products, prices, offers, shipping, location, policies — must come from tool results. Never invent facts about the brand, its workshop, its artisans, its history, customers, reviews, awards, certifications or sales numbers. Do not write "our artisans in <place>" or "we have been making … for N years" unless a tool says so.
-- Never state a price, discount or offer unless it appears in a tool result. Only mention rupee amounts you received from tools.
-- General craft knowledge (how kundan or oxidised silver is made, how to clean silver, what suits which outfit) is welcome, but write only what you are confident is accurate. Avoid statistics, medical or "skin-safe/allergy-free" claims, and claims about gemstone powers.
+- General knowledge (the history and meaning of a style, how to care for pieces, what suits which outfit) is welcome, but write only what you are confident is accurate. Avoid statistics, medical or "skin-safe/allergy-free" claims, and claims about gemstone powers.
 - Do not describe a product's materials, size or features beyond what its tool result says.
+
+Protect our craft (non-negotiable)
+- NEVER explain or hint at how our products — or products like them — are made. No step-by-step processes, no "how it is made" or "behind the scenes of making" sections, no DIY, tutorials or "try it yourself", no materials lists, tools, adhesives, techniques, proportions or workshop methods. The reader must not be able to learn to make the piece from the post; we sell these pieces and do not teach competitors or customers to copy them.
+- Write for BUYERS and WEARERS: history and meaning, how to choose, how to style, how to care for the piece, gifting, occasions. A short "what to look for when buying" tip is fine, phrased from the buyer's side.
+- Never state a price, discount, offer, sale or free-shipping promise — they change and the post stays online for years. Link to the product page and let it show the price.
 
 Style
 - Warm, clear Indian English ("colour", "jewellery"). Written for people, not for search engines; no keyword stuffing, no clichés like "In today's fast-paced world".
@@ -52,7 +55,7 @@ Style
 - Markdown only: ## headings, **bold**, *italic*, - bullets, 1. numbered lists, > quotes, [links](/relative-path). No HTML, no images, no external links.
 - A short, natural closing line pointing readers to the collection is fine; no hard sell.
 
-submit_post fields: title (≤ 90 characters, specific, not clickbait), excerpt (one or two sentences, 80–280 characters), content (the Markdown post), tags (2–5 lowercase topic words), metaTitle (≤ 65 characters), metaDescription (≤ 160 characters), coverProductId (the id of one product from search_products whose photo suits the post), coverAlt (a short description of that photo).`;
+submit_post fields: title (≤ 90 characters, specific, not clickbait, and never a "how … is made" title), excerpt (one or two sentences, 80–280 characters), content (the Markdown post), tags (2–5 lowercase topic words), metaTitle (≤ 65 characters), metaDescription (≤ 160 characters), coverProductId (the id of one product from search_products whose photo suits the post), coverAlt (a short description of that photo).`;
 
 const TOOLS = [
   {
@@ -72,7 +75,7 @@ const TOOLS = [
   },
   {
     name: "search_products",
-    description: "Search the live catalog. Returns up to 8 active products with id, name, price in rupees, category, description, availability and the url to link to. Leave `query` empty to browse a category.",
+    description: "Search the live catalog. Returns up to 8 active products with id, name, category, description, availability and the url to link to. Leave `query` empty to browse a category.",
     input_schema: {
       type: "object",
       properties: {
@@ -118,8 +121,6 @@ async function toolListExistingPosts() {
 }
 
 function toolGetStoreFacts() {
-  const now = Date.now();
-  const offerActive = now >= OFFER_START.getTime() && now < OFFER_END.getTime();
   return {
     brand: "Infinity Craft Space",
     location: "Bangalore, Karnataka, India",
@@ -127,9 +128,7 @@ function toolGetStoreFacts() {
     payment: "Online payment only (UPI, cards, net banking via Razorpay). Cash on delivery is NOT available.",
     shipping: "A shipping charge applies, calculated at checkout from the delivery location and parcel weight.",
     customisation: "Some products can be personalised — the product page says so.",
-    current_offer: offerActive
-      ? `Launch offer: FREE shipping on orders above ₹${FREE_SHIPPING_ABOVE}, valid until ${OFFER_END.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata" })}.`
-      : "No offer is running right now — do not mention any offer or discount.",
+    offers: "Offers and discounts change often and posts stay online for years — do NOT mention any offer, discount or free-shipping promise in a post.",
     contact: "infinitycraftspacejsag@gmail.com",
   };
 }
@@ -160,14 +159,12 @@ async function toolSearchProducts({ query, category } = {}, ctx) {
 
   for (const p of products) {
     ctx.seenProducts.set(String(p._id), p);
-    ctx.seenPrices.add(Math.round(p.price));
   }
   return {
     count: products.length,
     products: products.map((p) => ({
       id: String(p._id),
       name: p.name,
-      price_rupees: p.price,
       category: p.category,
       subcategory: p.subCategory,
       description: String(p.description || "").replace(/\s+/g, " ").slice(0, 350),
@@ -217,11 +214,22 @@ async function validateDraft(input, ctx) {
     if (!known) problems.push(`link ${href} does not match any product you looked up with search_products`);
   }
 
-  // Money: only amounts that came from tools; no invented discounts
-  const stated = [...content.matchAll(/₹\s?([\d,]+(?:\.\d+)?)/g)].map((m) => Math.round(parseFloat(m[1].replace(/,/g, ""))));
-  const bad = [...new Set(stated.filter((n) => !ctx.seenPrices.has(n) && n !== FREE_SHIPPING_ABOVE))];
-  if (bad.length) problems.push(`these rupee amounts did not come from tool results: ${bad.map((n) => `₹${n}`).join(", ")} — remove them or use real prices from search_products`);
-  if (/\b\d{1,2}\s?%\s*(off|discount)/i.test(content)) problems.push("do not mention percentage discounts");
+  // Prices and offers change; the post stays online. Product links show the live price.
+  if (/₹|\brs\.?\s?\d|\binr\b|\brupees?\b/i.test(content)) problems.push("do not mention prices or rupee amounts — link to the product and let its page show the price");
+  if (/\b\d{1,2}\s?%\s*(off|discount)/i.test(content) || /\b(free shipping|discount|sale|offer|coupon|promo)\b/i.test(content)) problems.push("do not mention offers, discounts, sales or free shipping");
+
+  // We never teach how our products are made
+  const MAKING_TITLE = /\bhow\b[^.?!]{0,60}\b(is|are|was|were|get|gets)\s+(made|crafted|created|produced|manufactured)\b|\bhow to make\b|\b(diy|tutorial|making of|behind the making)\b/i;
+  if (MAKING_TITLE.test(title)) problems.push("the title must not be about how pieces are made — write about history, meaning, choosing, styling, care or gifting instead");
+  const MAKING_BODY = [
+    /step[- ]by[- ]step/i, /\bdiy\b/i, /do[- ]it[- ]yourself/i, /\btutorial\b/i, /\byou(?:'ll| will| can) (?:need|make|create)\b/i,
+    /\b(?:materials|tools|supplies) (?:needed|required|you need)\b/i, /\bhow to make\b/i,
+    /\bhow (?:a |an |the |these |those |each )?[a-z\- ]{0,40}(?:is|are) (?:made|crafted|created|put together|assembled)\b/i,
+    /\b(?:is|are) (?:wound|wrapped|glued|set|fixed|soldered|assembled|moulded|molded|cast|stitched) (?:onto|around|with|by|into)\b/i,
+    /\b(?:adhesive|glue|solder|mould|mold|lac)\b[^.]{0,60}\b(?:is|are) (?:applied|used|put|heated|poured)\b/i,
+  ];
+  const hit = MAKING_BODY.find((re) => re.test(content));
+  if (hit) problems.push("the post explains how pieces are made or how to make them — remove every making/process/technique detail and write only for buyers and wearers (history, meaning, choosing, styling, care, gifting)");
 
   const cover = ctx.seenProducts.get(String(input.coverProductId || ""));
   if (!cover) problems.push("coverProductId must be the id of a product returned by search_products");
@@ -290,7 +298,7 @@ async function runBlogAgent({ config, runId, pillar, onStep }) {
     "Pick a specific, useful topic within the pillar that suits the season and the products we actually sell.",
   ].filter(Boolean).join("\n\n");
 
-  const ctx = { config, runId, seenProducts: new Map(), seenPrices: new Set(), savedPost: null };
+  const ctx = { config, runId, seenProducts: new Map(), savedPost: null };
   const usage = { inputTokens: 0, outputTokens: 0, turns: 0 };
   const messages = [{ role: "user", content: userPrompt }];
   let nudges = 0;
