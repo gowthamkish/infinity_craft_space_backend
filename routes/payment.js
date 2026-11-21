@@ -236,7 +236,10 @@ router.post("/", protect, async (req, res) => {
         message: "Payment gateway error. Please try again.",
         detail: notConfigured
           ? "Payment gateway is not configured on the server"
-          : rzpErr?.error?.description || rzpErr?.message || "Payment gateway unavailable",
+          : rzpErr?.error?.description ||
+            rzpErr?.message ||
+            (rzpErr?.statusCode ? `Razorpay responded with HTTP ${rzpErr.statusCode}` : "Payment gateway unavailable"),
+        code: rzpErr?.error?.code || null,
       });
     }
 
