@@ -10,6 +10,7 @@
 const express = require("express");
 const router = express.Router();
 const Product = require("../models/Product");
+const BlogPost = require("../models/BlogPost");
 
 const SITE_URL = process.env.SITE_URL || "https://www.infinitycraftspace.com";
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -20,6 +21,7 @@ let cacheExpiry = 0;
 const STATIC_PAGES = [
   { loc: "/",                changefreq: "daily",   priority: "1.0" },
   { loc: "/products",        changefreq: "daily",   priority: "0.9" },
+  { loc: "/blog",            changefreq: "weekly",  priority: "0.7" },
   { loc: "/contact-us",       changefreq: "monthly", priority: "0.4" },
   { loc: "/return-policy",   changefreq: "monthly", priority: "0.3" },
   { loc: "/terms-and-conditions", changefreq: "monthly", priority: "0.3" },
@@ -73,7 +75,15 @@ router.get("/sitemap.xml", async (_req, res) => {
       priority: "0.8",
     }));
 
-    const xml = buildXml([...STATIC_PAGES, ...productPages]);
+    const posts = await BlogPost.find({ status: "published" }).select("slug updatedAt").lean();
+    const blogPages = posts.map((p) => ({
+      loc: `/blog/${p.slug}`,
+      lastmod: p.updatedAt ? new Date(p.updatedAt).toISOString().split("T")[0] : undefined,
+      changefreq: "monthly",
+      priority: "0.6",
+    }));
+
+    const xml = buildXml([...STATIC_PAGES, ...productPages, ...blogPages]);
 
     cachedXml = xml;
     cacheExpiry = Date.now() + CACHE_TTL_MS;

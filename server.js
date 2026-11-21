@@ -255,6 +255,8 @@ app.use("/api/sse", require("./routes/sse"));
 // WhatsApp notifications (admin APIs: logs, test, resend)
 app.use("/api/whatsapp", require("./routes/whatsapp"));
 // AI chat agent (public + optionalAuth; rate limited inside the route)
+app.use("/api/blog", require("./routes/blog"));
+app.use("/api/blog-agent", require("./routes/blogAgent"));
 app.use("/api/chat", require("./routes/chat"));
 // Dynamic sitemap (no auth required — for search engine crawlers)
 app.use("/", require("./routes/sitemap"));
@@ -339,6 +341,9 @@ cron.schedule("*/10 * * * *", async () => {
     console.error("[WhatsApp Cron] Error:", err.message);
   }
 });
+
+// ── Blog agent — writes a post every N days (schedule is editable in Admin → Blog) ──
+require("./services/blogAgentScheduler").startScheduler(cron);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
