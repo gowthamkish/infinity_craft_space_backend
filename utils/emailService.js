@@ -187,8 +187,13 @@ async function sendViaBrevo({ to, subject, html, text, replyTo }) {
   }
 }
 
+// Why the most recent send failed (shown to the admin when an order email can't be delivered)
+let lastEmailError = null;
+exports.getLastEmailError = () => lastEmailError;
+
 // Send email — returns true on success, false otherwise (never throws)
 exports.sendEmail = async (email, template, variables = {}) => {
+  lastEmailError = null;
   try {
     if (!email || (Array.isArray(email) && email.length === 0)) return false;
 
@@ -198,7 +203,8 @@ exports.sendEmail = async (email, template, variables = {}) => {
     }
 
     if (!process.env.EMAIL_USER) {
-      console.warn("Email service not configured (set BREVO_API_KEY, or EMAIL_USER/EMAIL_PASSWORD for SMTP)");
+      lastEmailError = "Email is not configured on the server: BREVO_API_KEY is missing";
+      console.warn(`[Email] ${lastEmailError}`);
       return false;
     }
 
@@ -211,7 +217,8 @@ exports.sendEmail = async (email, template, variables = {}) => {
     });
     return true;
   } catch (error) {
-    console.error("Error sending email:", error.message || error);
+    lastEmailError = error.message || String(error);
+    console.error("[Email] Send failed:", lastEmailError);
     return false;
   }
 };
