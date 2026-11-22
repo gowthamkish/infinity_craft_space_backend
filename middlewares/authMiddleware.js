@@ -234,21 +234,26 @@ const isAdmin = (req, res, next) => {
 
 // Optional auth - doesn't fail if no token, but sets user if valid token present
 const optionalAuth = async (req, res, next) => {
-  const token =
-    (req.headers.authorization?.startsWith("Bearer") &&
-      req.headers.authorization.split(" ")[1]) ||
-    req.cookies?.accessToken ||
-    null;
+  // Same credentials `protect` accepts: the httpOnly "token" cookie, or an Authorization: Bearer header
+  // (browsers that block cross-site cookies, e.g. iOS Safari, only have the header). Try each until one is valid —
+  // a stale cookie must not hide a good header.
+  const candidates = [
+    req.cookies?.token,
+    req.headers.authorization?.startsWith("Bearer") ? req.headers.authorization.split(" ")[1] : null,
+  ].filter(Boolean);
 
-  if (token) {
+  req.user = null;
+  for (const token of candidates) {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = await User.findById(decoded.id).select("-password");
+      const user = await User.findById(decoded.id).select("-password");
+      if (user) {
+        req.user = user;
+        break;
+      }
     } catch (err) {
-      req.user = null;
+      /* expired / invalid — try the next one */
     }
-  } else {
-    req.user = null;
   }
   next();
 };
