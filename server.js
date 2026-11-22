@@ -257,6 +257,7 @@ app.use("/api/whatsapp", require("./routes/whatsapp"));
 // AI chat agent (public + optionalAuth; rate limited inside the route)
 app.use("/api/blog", require("./routes/blog"));
 app.use("/api/blog-agent", require("./routes/blogAgent"));
+app.use("/api/instagram", require("./routes/instagram"));
 app.use("/api/chat", require("./routes/chat"));
 // Dynamic sitemap (no auth required — for search engine crawlers)
 app.use("/", require("./routes/sitemap"));
