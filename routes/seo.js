@@ -18,7 +18,10 @@ const Category = require("../models/Category");
 const { buildProductFaq, faqJsonLd } = require("../utils/productFaq");
 const router = express.Router();
 
-const SITE = (process.env.FRONTEND_URL || process.env.SITE_URL || "https://www.infinitycraftspace.com").replace(/\/$/, "");
+// The pages declare https://infinitycraftspace.com (no "www") as their canonical address, so every server-built URL must
+// use it too — even if a setting on the host says www.
+const canonicalSite = (v) => String(v || "https://infinitycraftspace.com").replace(/\/+$/, "").replace(/^(https?:\/\/)www\./i, "$1");
+const SITE = canonicalSite(process.env.SITE_URL); // (FRONTEND_URL is for CORS/emails and may legitimately be www)
 const SITE_NAME = "Infinity Craft Space";
 const TTL = 15 * 60 * 1000;
 const cache = new Map(); // url → { html, exp }

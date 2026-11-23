@@ -12,7 +12,10 @@ const router = express.Router();
 const Product = require("../models/Product");
 const BlogPost = require("../models/BlogPost");
 
-const SITE_URL = process.env.SITE_URL || "https://www.infinitycraftspace.com";
+// The pages declare https://infinitycraftspace.com (no "www") as their canonical address, so every server-built URL must
+// use it too — even if a setting on the host says www.
+const canonicalSite = (v) => String(v || "https://infinitycraftspace.com").replace(/\/+$/, "").replace(/^(https?:\/\/)www\./i, "$1");
+const SITE_URL = canonicalSite(process.env.SITE_URL);
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 let cachedXml = null;

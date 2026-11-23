@@ -56,8 +56,7 @@ app.use(
   }),
 );
 
-app.use(
-  cors({
+const corsMiddleware = cors({
     origin: (origin, callback) => {
       // In development, allow requests with no origin (Postman, curl, etc.).
       // In production, every legitimate browser request will have an Origin header.
@@ -89,8 +88,16 @@ app.use(
     exposedHeaders: ["Content-Length", "X-JSON-Response"],
     maxAge: 86400, // 24 hours
     optionsSuccessStatus: 200,
-  }),
-);
+  });
+
+// Browsers always send an Origin header; crawlers and uptime monitors never do. These few read-only public
+// endpoints must work without one — otherwise Google can't fetch the sitemap and pingers get a 403.
+// Everything else keeps the strict rule.
+const NO_ORIGIN_PATHS = [/^\/sitemap\.xml$/, /^\/health$/, /^\/prerender\/(home|product\/[^/]+)$/, /^\/api\/(blog|seo)-agent\/tick$/];
+app.use((req, res, next) => {
+  const publicRead = !req.headers.origin && (req.method === "GET" || req.method === "HEAD") && NO_ORIGIN_PATHS.some((re) => re.test(req.path));
+  return publicRead ? next() : corsMiddleware(req, res, next);
+});
 
 // Add additional CORS headers middleware for APIs
 app.use((req, res, next) => {
@@ -258,6 +265,7 @@ app.use("/api/whatsapp", require("./routes/whatsapp"));
 app.use("/api/blog", require("./routes/blog"));
 app.use("/api/blog-agent", require("./routes/blogAgent"));
 app.use("/api/instagram", require("./routes/instagram"));
+app.use("/api/seo-agent", require("./routes/seoAgent"));
 app.use("/api/chat", require("./routes/chat"));
 // Dynamic sitemap (no auth required — for search engine crawlers)
 app.use("/", require("./routes/sitemap"));
@@ -345,6 +353,7 @@ cron.schedule("*/10 * * * *", async () => {
 
 // ── Blog agent — writes a post every N days (schedule is editable in Admin → Blog) ──
 require("./services/blogAgentScheduler").startScheduler(cron);
+require("./services/seoAgent").startScheduler(cron); // weekly SEO & website-health audit
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

@@ -38,7 +38,9 @@ async function tickHandler(req, res) {
   if (!safeEqual(req.get("x-cron-secret") || req.query.key, secret)) return res.status(401).json({ success: false });
   try {
     const r = await tick();
-    res.status(r.started ? 202 : 200).json({ success: true, ...r });
+    // The same ping also checks whether the weekly SEO audit is due
+    const seo = await require("../services/seoAgent").tick().catch(() => ({ started: false }));
+    res.status(r.started || seo.started ? 202 : 200).json({ success: true, ...r, seoAudit: seo });
   } catch (e) {
     console.error("[BlogAgent] Tick endpoint error:", e.message);
     res.status(500).json({ success: false });
