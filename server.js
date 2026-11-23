@@ -266,6 +266,7 @@ app.use("/api/blog", require("./routes/blog"));
 app.use("/api/blog-agent", require("./routes/blogAgent"));
 app.use("/api/instagram", require("./routes/instagram"));
 app.use("/api/seo-agent", require("./routes/seoAgent"));
+app.use("/api/marketing", require("./routes/marketing"));
 app.use("/api/chat", require("./routes/chat"));
 // Dynamic sitemap (no auth required — for search engine crawlers)
 app.use("/", require("./routes/sitemap"));
