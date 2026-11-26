@@ -227,4 +227,11 @@ ProductSchema.post("save", function (doc) {
     .catch((err) => console.error("[Embedding] Failed to update product embedding:", err.message));
 });
 
+// Any write clears the cached public product list
+const listCache = require("../utils/productListCache");
+const clearListCache = () => listCache.clear();
+ProductSchema.post(["save", "insertMany", "bulkWrite"], clearListCache);
+ProductSchema.post(["updateOne", "updateMany", "replaceOne", "findOneAndUpdate", "findOneAndReplace", "findOneAndDelete", "deleteMany"], clearListCache);
+ProductSchema.post("deleteOne", { document: true, query: true }, clearListCache);
+
 module.exports = mongoose.model("Product", ProductSchema);

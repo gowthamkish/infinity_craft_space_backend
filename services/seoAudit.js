@@ -136,11 +136,23 @@ async function checkLinks(products, publishedPosts, instaPosts) {
   for (const ig of instaPosts) if (ig.imageUrl) imageJobs.push({ url: ig.imageUrl, where: "Instagram feed photo" });
 
   const jobs = imageJobs.slice(0, 300);
-  const results = await pool(jobs, 10, (j) => timedFetch(j.url, { method: "HEAD", timeoutMs: 8000, readBody: false, headers: { "user-agent": "Mozilla/5.0" } }));
+  const head = (j) => timedFetch(j.url, { method: "HEAD", timeoutMs: 8000, readBody: false, headers: { "user-agent": "Mozilla/5.0" } });
+  const results = await pool(jobs, 10, head);
+  // A dropped connection, timeout or server hiccup says nothing about the photo: retry those one at a time
+  const flaky = (r) => r.status === 0 || r.status === 429 || r.status >= 500;
+  for (let i = 0; i < results.length; i++) {
+    for (let attempt = 1; attempt <= 2 && flaky(results[i]); attempt++) {
+      await new Promise((done) => setTimeout(done, attempt * 500));
+      results[i] = await head(jobs[i]);
+    }
+  }
+  // Only an answer saying the file is unavailable counts as broken
+  let unverified = 0;
   results.forEach((r, i) => {
-    if (r.status === 0 || r.status >= 400) issues.push({ kind: "broken_image", severity: "critical", where: jobs[i].where, productId: jobs[i].productId, target: jobs[i].url, message: `Photo does not load (${r.status || r.error}).`, fix: "Upload the photo again." });
+    if (flaky(r)) unverified++;
+    else if (r.status >= 400) issues.push({ kind: "broken_image", severity: "critical", where: jobs[i].where, productId: jobs[i].productId, target: jobs[i].url, message: `Photo does not load (${r.status}).`, fix: "Upload the photo again." });
   });
-  return { issues, imagesChecked: jobs.length, imagesSkipped: Math.max(0, imageJobs.length - jobs.length) };
+  return { issues, imagesChecked: jobs.length - unverified, imagesUnverified: unverified, imagesSkipped: Math.max(0, imageJobs.length - jobs.length) };
 }
 
 // ── 3. Sitemap & indexing ────────────────────────────────────────────────────
@@ -399,6 +411,7 @@ async function runAudit() {
     productIssues: productResults.filter((p) => p.issues.length > 0).slice(0, 500),
     linkIssues: links.issues.slice(0, 200),
     imagesChecked: links.imagesChecked,
+    imagesUnverified: links.imagesUnverified || 0,
     indexingChecks,
     performance: { lighthouse: perf.lighthouse, api: perf.api, checks: perf.checks },
     actions: topActions({ productResults, linkIssues: links.issues, indexingChecks, perf }),

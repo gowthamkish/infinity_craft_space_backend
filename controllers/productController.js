@@ -8,6 +8,8 @@ const {
   getBoughtTogether,
 } = require("../utils/recommendations");
 
+const listCache = require("../utils/productListCache");
+
 const getAllProducts = async (req, res) => {
   try {
     const {
@@ -36,6 +38,12 @@ const getAllProducts = async (req, res) => {
     const pageNum = Math.max(1, parseInt(page, 10));
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
 
+    // Searches are not cached: too many different terms to be worth keeping
+    const cacheKey = search ? null : JSON.stringify([pageNum, limitNum, sort, category, subCategory, minPrice, maxPrice, inStock]);
+    const cached = cacheKey && listCache.get(cacheKey);
+    if (cached) return res.type("json").send(cached);
+    const cacheVersion = listCache.version();
+
     const [products, total] = await Promise.all([
       Product.find(filter)
         .sort(sort)
@@ -45,7 +53,7 @@ const getAllProducts = async (req, res) => {
       Product.countDocuments(filter),
     ]);
 
-    res.json({
+    const body = JSON.stringify({
       success: true,
       count: products.length,
       total,
@@ -53,6 +61,8 @@ const getAllProducts = async (req, res) => {
       pages: Math.ceil(total / limitNum),
       products,
     });
+    if (cacheKey) listCache.set(cacheKey, body, cacheVersion);
+    res.type("json").send(body);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
